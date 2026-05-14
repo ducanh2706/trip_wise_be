@@ -22,6 +22,7 @@ export interface HotelDetailResponse {
   host: { id: string; name: string } | null;
   policies: { freeCancellation: boolean };
   isFavoritedByMe: boolean;
+  googleMapUrl: string | null;
 }
 
 function deriveCategory(starRating: number): string {
@@ -64,13 +65,19 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
     reviewCount: 0,
     latitude: hotel.latitude ?? null,
     longitude: hotel.longitude ?? null,
-    description: null,
-    images: hotel.image ? [hotel.image] : [],
-    amenities: [],
+    description: hotel.description ?? null,
+    images:
+      hotel.images && hotel.images.length > 0
+        ? hotel.images
+        : hotel.image
+          ? [hotel.image]
+          : [],
+    amenities: hotel.amenities ?? [],
     priceFrom: cheapestRoom?.base_price ?? null,
     currency: 'VND',
     host: provider ? { id: provider._id, name: provider.business_name } : null,
     policies: { freeCancellation: true },
     isFavoritedByMe: false,
+    googleMapUrl: hotel.google_map_url ?? null,
   };
 }
