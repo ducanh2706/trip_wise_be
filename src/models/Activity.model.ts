@@ -10,6 +10,10 @@ const activitySchema = new Schema(
     base_price: { type: Number, required: true },
     status: { type: String },
     image: { type: String, default: null },
+    // Added by scripts/backfill-activities.js (Add Activity screen).
+    category: { type: String, default: null }, // FOOD|SIGHTSEEING|TRANSPORT|OUTDOORS
+    rating: { type: Number, default: null },
+    description: { type: String, default: null },
     created_at: { type: String },
     updated_at: { type: String },
     deleted_at: { type: String, default: null },
