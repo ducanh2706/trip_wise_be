@@ -19,6 +19,10 @@ const TIERS = [
 // product ask, kept in VND so there is no currency conversion anywhere).
 const CARD_SEED_BALANCE = 30_000_000;
 
+// Max rows in the wallet screen's "Recent Transactions" preview. The full
+// history is reachable via "See all" (GET /wallet/transactions, paginated).
+const RECENT_TX_PREVIEW = 5;
+
 export interface WalletTransaction {
   id: string;
   title: string;
@@ -229,7 +233,7 @@ export async function getWalletOverview(): Promise<WalletOverviewResponse | null
     pointsValueVnd: points * POINT_VALUE_VND,
     tier: deriveTier(points),
     cards: cards.map(mapCard),
-    transactions: ledger.slice(0, 10),
+    transactions: ledger.slice(0, RECENT_TX_PREVIEW),
   };
 }
 
