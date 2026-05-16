@@ -21,6 +21,7 @@ const MAX_LOCATION_DEPTH = 6;
 const DEFAULT_RECOMMENDED_CARD_HEIGHTS = [240, 180, 180, 240];
 const DEFAULT_OFFER_CTA_LABELS = ['BOOK NOW', 'VIEW STAY'];
 const DEFAULT_OFFER_ACCENT_TONES = ['primary', 'secondary'];
+const DEFAULT_HOME_SEARCH_ROUTE = '/add_location_search?category=all';
 const LOCATION_TYPE_PRIORITY = [
   'city',
   'province',
@@ -145,7 +146,7 @@ function buildDefaultHomeContent(): HomeContentDoc {
       destinationPlaceholder: 'Destination',
       destinationRoute: '/add_location_search',
       searchButtonLabel: 'Search Destinations',
-      searchButtonRoute: '/search_filter',
+      searchButtonRoute: DEFAULT_HOME_SEARCH_ROUTE,
       detailItems: [
         {
           icon: 'calendar_today_rounded',
@@ -164,7 +165,7 @@ function buildDefaultHomeContent(): HomeContentDoc {
         key: 'hotels',
         icon: 'bed_rounded',
         label: 'HOTELS',
-        route: '/search_filter',
+        route: '/add_location_search?category=hotels',
         backgroundTone: 'primary_soft',
         iconTone: 'primary',
       },
@@ -172,7 +173,7 @@ function buildDefaultHomeContent(): HomeContentDoc {
         key: 'flights',
         icon: 'flight_rounded',
         label: 'FLIGHTS',
-        route: '/service_details/2',
+        route: '/add_location_search?category=flights',
         backgroundTone: 'secondary_soft',
         iconTone: 'secondary',
       },
@@ -180,7 +181,7 @@ function buildDefaultHomeContent(): HomeContentDoc {
         key: 'tours',
         icon: 'explore_rounded',
         label: 'TOURS',
-        route: '/service_details/3',
+        route: '/add_location_search?category=tours',
         backgroundTone: 'primary_soft',
         iconTone: 'primary',
       },
@@ -188,7 +189,7 @@ function buildDefaultHomeContent(): HomeContentDoc {
         key: 'train',
         icon: 'train_rounded',
         label: 'TRAIN',
-        route: '/service_details/4',
+        route: '/add_location_search?category=train',
         backgroundTone: 'primary_soft',
         iconTone: 'primary',
       },
@@ -493,7 +494,10 @@ function normalizeSearchCard(searchCard: HomeSearchCardDoc): HomeSearchCard {
     destinationPlaceholder: searchCard.destinationPlaceholder,
     destinationRoute: searchCard.destinationRoute,
     searchButtonLabel: searchCard.searchButtonLabel,
-    searchButtonRoute: searchCard.searchButtonRoute,
+    searchButtonRoute:
+      searchCard.searchButtonRoute === '/search_filter'
+        ? DEFAULT_HOME_SEARCH_ROUTE
+        : searchCard.searchButtonRoute,
     detailItems: (searchCard.detailItems ?? []).map((item) => ({
       icon: item.icon,
       label: item.label,
@@ -507,10 +511,33 @@ function normalizeCategories(categories: HomeCategoryDoc[]): HomeCategoryItem[] 
     key: category.key,
     icon: category.icon,
     label: category.label,
-    route: category.route,
+    route: normalizeCategoryRoute(category.key, category.route),
     backgroundTone: category.backgroundTone,
     iconTone: category.iconTone,
   }));
+}
+
+function normalizeCategoryRoute(key: string, route: string): string {
+  const normalizedKey = key.trim().toLowerCase();
+  const normalizedRoute = route.trim();
+
+  if (
+    normalizedRoute.startsWith('/service_details/') ||
+    normalizedRoute === '/search_filter'
+  ) {
+    switch (normalizedKey) {
+      case 'hotels':
+        return '/add_location_search?category=hotels';
+      case 'flights':
+        return '/add_location_search?category=flights';
+      case 'tours':
+        return '/add_location_search?category=tours';
+      case 'train':
+        return '/add_location_search?category=train';
+    }
+  }
+
+  return normalizedRoute;
 }
 
 function normalizeSections(sections: HomeSectionsDoc): HomeSections {
@@ -533,6 +560,93 @@ function normalizeSections(sections: HomeSectionsDoc): HomeSections {
   };
 }
 
+function mergeHomeConfig(config: HomeContentDoc | null): HomeContentDoc {
+  const defaults = buildDefaultHomeContent();
+
+  return {
+    key: HOME_KEY,
+    searchCard: {
+      headline: config?.searchCard?.headline ?? defaults.searchCard.headline,
+      destinationPlaceholder:
+        config?.searchCard?.destinationPlaceholder ??
+        defaults.searchCard.destinationPlaceholder,
+      destinationRoute:
+        config?.searchCard?.destinationRoute ?? defaults.searchCard.destinationRoute,
+      searchButtonLabel:
+        config?.searchCard?.searchButtonLabel ?? defaults.searchCard.searchButtonLabel,
+      searchButtonRoute:
+        config?.searchCard?.searchButtonRoute ?? defaults.searchCard.searchButtonRoute,
+      detailItems:
+        config?.searchCard?.detailItems && config.searchCard.detailItems.length > 0
+          ? config.searchCard.detailItems
+          : defaults.searchCard.detailItems,
+    },
+    categories:
+      config?.categories && config.categories.length > 0
+        ? config.categories
+        : defaults.categories,
+    sections: {
+      offers: {
+        badgeLabel:
+          config?.sections?.offers?.badgeLabel ?? defaults.sections.offers.badgeLabel,
+        ctaLabels:
+          config?.sections?.offers?.ctaLabels &&
+          config.sections.offers.ctaLabels.length > 0
+            ? config.sections.offers.ctaLabels
+            : defaults.sections.offers.ctaLabels,
+        accentTones:
+          config?.sections?.offers?.accentTones &&
+          config.sections.offers.accentTones.length > 0
+            ? config.sections.offers.accentTones
+            : defaults.sections.offers.accentTones,
+      },
+      recommended: {
+        title:
+          config?.sections?.recommended?.title ?? defaults.sections.recommended.title,
+        subtitle:
+          config?.sections?.recommended?.subtitle ??
+          defaults.sections.recommended.subtitle,
+        actionLabel:
+          config?.sections?.recommended?.actionLabel ??
+          defaults.sections.recommended.actionLabel,
+        actionRoute:
+          config?.sections?.recommended?.actionRoute ??
+          defaults.sections.recommended.actionRoute,
+        cardHeights:
+          config?.sections?.recommended?.cardHeights &&
+          config.sections.recommended.cardHeights.length > 0
+            ? config.sections.recommended.cardHeights
+            : defaults.sections.recommended.cardHeights,
+      },
+      trending: {
+        title: config?.sections?.trending?.title ?? defaults.sections.trending.title,
+        detailsActionLabel:
+          config?.sections?.trending?.detailsActionLabel ??
+          defaults.sections.trending.detailsActionLabel,
+        actionLabel:
+          config?.sections?.trending?.actionLabel ??
+          defaults.sections.trending.actionLabel,
+        actionRoute:
+          config?.sections?.trending?.actionRoute ??
+          defaults.sections.trending.actionRoute,
+      },
+    },
+    curated: {
+      featuredHotelIds:
+        config?.curated?.featuredHotelIds ?? defaults.curated.featuredHotelIds,
+      recommendedHotelIds:
+        config?.curated?.recommendedHotelIds ??
+        defaults.curated.recommendedHotelIds,
+      trendingHotelIds:
+        config?.curated?.trendingHotelIds ?? defaults.curated.trendingHotelIds,
+    },
+    offerOverrides: config?.offerOverrides ?? defaults.offerOverrides,
+    recommendedOverrides:
+      config?.recommendedOverrides ?? defaults.recommendedOverrides,
+    trendingOverrides: config?.trendingOverrides ?? defaults.trendingOverrides,
+  };
+}
+
 async function getHomeConfig(): Promise<HomeContentDoc> {
   const defaultContent = buildDefaultHomeContent();
   const config = await HomeContent.findOneAndUpdate(
@@ -545,7 +659,25 @@ async function getHomeConfig(): Promise<HomeContentDoc> {
     },
   );
 
-  return (config as HomeContentDoc | null) ?? defaultContent;
+  const mergedConfig = mergeHomeConfig((config as HomeContentDoc | null) ?? null);
+
+  const needsBackfill =
+    !config?.searchCard ||
+    !config.categories ||
+    config.categories.length === 0 ||
+    !config.sections?.offers ||
+    !config.sections?.recommended ||
+    !config.sections?.trending;
+
+  if (needsBackfill) {
+    await HomeContent.updateOne(
+      { key: HOME_KEY },
+      { $set: mergedConfig },
+      { upsert: true },
+    );
+  }
+
+  return mergedConfig;
 }
 
 export async function getHomeData(): Promise<HomeResponse> {
