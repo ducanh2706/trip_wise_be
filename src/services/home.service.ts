@@ -1,12 +1,26 @@
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
+import {
+  HomeContent,
+  type HomeCategoryDoc,
+  type HomeContentDoc,
+  type HomeOfferOverrideDoc,
+  type HomeRecommendedOverrideDoc,
+  type HomeSearchCardDoc,
+  type HomeSectionsDoc,
+  type HomeTrendingOverrideDoc,
+} from '@/models/HomeContent.model';
 import { Location, type LocationDoc } from '@/models/Location.model';
 import { Room } from '@/models/Room.model';
 
+const HOME_KEY = 'home';
 const HOME_SOURCE_LIMIT = 36;
 const FEATURED_LIMIT = 2;
 const RECOMMENDED_LIMIT = 4;
 const TRENDING_LIMIT = 6;
 const MAX_LOCATION_DEPTH = 6;
+const DEFAULT_RECOMMENDED_CARD_HEIGHTS = [240, 180, 180, 240];
+const DEFAULT_OFFER_CTA_LABELS = ['BOOK NOW', 'VIEW STAY'];
+const DEFAULT_OFFER_ACCENT_TONES = ['primary', 'secondary'];
 const LOCATION_TYPE_PRIORITY = [
   'city',
   'province',
@@ -43,26 +57,171 @@ interface HomeSourceHotel extends BaseHomeHotel {
   hasImage: boolean;
 }
 
+export interface HomeSearchDetailItem {
+  icon: string;
+  label: string;
+  value: string;
+}
+
+export interface HomeSearchCard {
+  headline: string;
+  destinationPlaceholder: string;
+  destinationRoute: string;
+  searchButtonLabel: string;
+  searchButtonRoute: string;
+  detailItems: HomeSearchDetailItem[];
+}
+
+export interface HomeCategoryItem {
+  key: string;
+  icon: string;
+  label: string;
+  route: string;
+  backgroundTone: string;
+  iconTone: string;
+}
+
+export interface HomeOffersSection {
+  badgeLabel: string;
+}
+
+export interface HomeRecommendedSection {
+  title: string;
+  subtitle: string;
+  actionLabel: string;
+  actionRoute: string;
+}
+
+export interface HomeTrendingSection {
+  title: string;
+  detailsActionLabel: string;
+  actionLabel: string | null;
+  actionRoute: string | null;
+}
+
+export interface HomeSections {
+  offers: HomeOffersSection;
+  recommended: HomeRecommendedSection;
+  trending: HomeTrendingSection;
+}
+
 export interface HomeOfferItem extends BaseHomeHotel {
   title: string;
   subtitle: string;
+  badgeLabel: string;
   ctaLabel: string;
+  accentTone: string;
+  route: string;
 }
 
 export interface HomeRecommendedItem extends BaseHomeHotel {
   title: string;
   caption: string;
+  cardHeight: number;
+  route: string;
 }
 
 export interface HomeTrendingHotelItem extends BaseHomeHotel {
   name: string;
   location: string;
+  detailsLabel: string;
+  route: string;
 }
 
 export interface HomeResponse {
+  searchCard: HomeSearchCard;
+  categories: HomeCategoryItem[];
+  sections: HomeSections;
   featuredOffers: HomeOfferItem[];
   recommendedDestinations: HomeRecommendedItem[];
   trendingHotels: HomeTrendingHotelItem[];
+}
+
+function buildDefaultHomeContent(): HomeContentDoc {
+  return {
+    key: HOME_KEY,
+    searchCard: {
+      headline: 'Where to next?',
+      destinationPlaceholder: 'Destination',
+      destinationRoute: '/add_location_search',
+      searchButtonLabel: 'Search Destinations',
+      searchButtonRoute: '/search_filter',
+      detailItems: [
+        {
+          icon: 'calendar_today_rounded',
+          label: 'DATES',
+          value: 'Oct 12 - 18',
+        },
+        {
+          icon: 'group_rounded',
+          label: 'GUESTS',
+          value: '2 Adults',
+        },
+      ],
+    },
+    categories: [
+      {
+        key: 'hotels',
+        icon: 'bed_rounded',
+        label: 'HOTELS',
+        route: '/search_filter',
+        backgroundTone: 'primary_soft',
+        iconTone: 'primary',
+      },
+      {
+        key: 'flights',
+        icon: 'flight_rounded',
+        label: 'FLIGHTS',
+        route: '/service_details/2',
+        backgroundTone: 'secondary_soft',
+        iconTone: 'secondary',
+      },
+      {
+        key: 'tours',
+        icon: 'explore_rounded',
+        label: 'TOURS',
+        route: '/service_details/3',
+        backgroundTone: 'primary_soft',
+        iconTone: 'primary',
+      },
+      {
+        key: 'train',
+        icon: 'train_rounded',
+        label: 'TRAIN',
+        route: '/service_details/4',
+        backgroundTone: 'primary_soft',
+        iconTone: 'primary',
+      },
+    ],
+    sections: {
+      offers: {
+        badgeLabel: 'LIMITED OFFER',
+        ctaLabels: DEFAULT_OFFER_CTA_LABELS,
+        accentTones: DEFAULT_OFFER_ACCENT_TONES,
+      },
+      recommended: {
+        title: 'Recommended',
+        subtitle: 'Curated escapes for your style',
+        actionLabel: 'See all',
+        actionRoute: '/search_filter',
+        cardHeights: DEFAULT_RECOMMENDED_CARD_HEIGHTS,
+      },
+      trending: {
+        title: 'Trending Hotels',
+        detailsActionLabel: 'DETAILS',
+        actionLabel: null,
+        actionRoute: null,
+      },
+    },
+    curated: {
+      featuredHotelIds: [],
+      recommendedHotelIds: [],
+      trendingHotelIds: [],
+    },
+    offerOverrides: [],
+    recommendedOverrides: [],
+    trendingOverrides: [],
+  };
 }
 
 function isFilledString(value: string | null | undefined): value is string {
@@ -82,6 +241,10 @@ function pickPrimaryImage(
   }
 
   return null;
+}
+
+function buildHotelRoute(hotelId: number): string {
+  return `/service_details/${hotelId}`;
 }
 
 function formatVndPrice(value: number): string {
@@ -131,7 +294,6 @@ async function loadLocationMap(startIds: number[]): Promise<Map<number, LeanLoca
     new Set(startIds.filter((id) => Number.isInteger(id) && id > 0)),
   );
 
-  // Walk ancestor chains in batches so the home feed does not fan out into one query per hotel.
   for (let depth = 0; depth < MAX_LOCATION_DEPTH && pendingIds.length > 0; depth++) {
     const idsToFetch = pendingIds.filter((id) => !locationMap.has(id));
     if (idsToFetch.length === 0) {
@@ -295,36 +457,138 @@ function fillMissingHotels<T extends { hotelId: number }>(
   return mergedItems.slice(0, limit);
 }
 
-export async function getHomeData(): Promise<HomeResponse> {
-  const hotels = (await Hotel.find({ deleted_at: null })
-    .select({
-      _id: 1,
-      location_id: 1,
-      name: 1,
-      address: 1,
-      star_rating: 1,
-      image: 1,
-      images: 1,
-    })
-    .sort({ star_rating: -1, _id: 1 })
-    .limit(HOME_SOURCE_LIMIT)
-    .lean()) as LeanHotel[];
+function pickByIds<T extends { hotelId: number }>(
+  ids: number[] | undefined,
+  itemByHotelId: Map<number, T>,
+): T[] {
+  if (!ids || ids.length === 0) {
+    return [];
+  }
 
-  if (hotels.length === 0) {
+  const results: T[] = [];
+  const seenHotelIds = new Set<number>();
+
+  for (const hotelId of ids) {
+    const item = itemByHotelId.get(hotelId);
+    if (!item || seenHotelIds.has(hotelId)) {
+      continue;
+    }
+
+    seenHotelIds.add(hotelId);
+    results.push(item);
+  }
+
+  return results;
+}
+
+function mapOverrides<T extends { hotelId: number }>(
+  overrides: T[] | undefined,
+): Map<number, T> {
+  return new Map((overrides ?? []).map((override) => [override.hotelId, override] as const));
+}
+
+function normalizeSearchCard(searchCard: HomeSearchCardDoc): HomeSearchCard {
+  return {
+    headline: searchCard.headline,
+    destinationPlaceholder: searchCard.destinationPlaceholder,
+    destinationRoute: searchCard.destinationRoute,
+    searchButtonLabel: searchCard.searchButtonLabel,
+    searchButtonRoute: searchCard.searchButtonRoute,
+    detailItems: (searchCard.detailItems ?? []).map((item) => ({
+      icon: item.icon,
+      label: item.label,
+      value: item.value,
+    })),
+  };
+}
+
+function normalizeCategories(categories: HomeCategoryDoc[]): HomeCategoryItem[] {
+  return categories.map((category) => ({
+    key: category.key,
+    icon: category.icon,
+    label: category.label,
+    route: category.route,
+    backgroundTone: category.backgroundTone,
+    iconTone: category.iconTone,
+  }));
+}
+
+function normalizeSections(sections: HomeSectionsDoc): HomeSections {
+  return {
+    offers: {
+      badgeLabel: sections.offers.badgeLabel,
+    },
+    recommended: {
+      title: sections.recommended.title,
+      subtitle: sections.recommended.subtitle,
+      actionLabel: sections.recommended.actionLabel,
+      actionRoute: sections.recommended.actionRoute,
+    },
+    trending: {
+      title: sections.trending.title,
+      detailsActionLabel: sections.trending.detailsActionLabel,
+      actionLabel: sections.trending.actionLabel ?? null,
+      actionRoute: sections.trending.actionRoute ?? null,
+    },
+  };
+}
+
+async function getHomeConfig(): Promise<HomeContentDoc> {
+  const defaultContent = buildDefaultHomeContent();
+  const config = await HomeContent.findOneAndUpdate(
+    { key: HOME_KEY },
+    { $setOnInsert: defaultContent },
+    {
+      new: true,
+      upsert: true,
+      lean: true,
+    },
+  );
+
+  return (config as HomeContentDoc | null) ?? defaultContent;
+}
+
+export async function getHomeData(): Promise<HomeResponse> {
+  const [config, hotels] = await Promise.all([
+    getHomeConfig(),
+    Hotel.find({ deleted_at: null })
+      .select({
+        _id: 1,
+        location_id: 1,
+        name: 1,
+        address: 1,
+        star_rating: 1,
+        image: 1,
+        images: 1,
+      })
+      .sort({ star_rating: -1, _id: 1 })
+      .limit(HOME_SOURCE_LIMIT)
+      .lean(),
+  ]);
+
+  const leanHotels = hotels as LeanHotel[];
+  const searchCard = normalizeSearchCard(config.searchCard);
+  const categories = normalizeCategories(config.categories ?? []);
+  const sections = normalizeSections(config.sections);
+
+  if (leanHotels.length === 0) {
     return {
+      searchCard,
+      categories,
+      sections,
       featuredOffers: [],
       recommendedDestinations: [],
       trendingHotels: [],
     };
   }
 
-  const hotelIds = hotels.map((hotel) => hotel._id);
+  const hotelIds = leanHotels.map((hotel) => hotel._id);
   const [cheapestPrices, locationMap] = await Promise.all([
     getCheapestRoomPrices(hotelIds),
-    loadLocationMap(hotels.map((hotel) => hotel.location_id)),
+    loadLocationMap(leanHotels.map((hotel) => hotel.location_id)),
   ]);
 
-  const sourceHotels: HomeSourceHotel[] = hotels.map((hotel) => {
+  const sourceHotels: HomeSourceHotel[] = leanHotels.map((hotel) => {
     const locationTrail = buildLocationTrail(hotel.location_id, locationMap);
     const locationLabel = buildLocationLabel(locationTrail) || hotel.address;
     const priceFrom = cheapestPrices.get(hotel._id) ?? null;
@@ -345,69 +609,159 @@ export async function getHomeData(): Promise<HomeResponse> {
     };
   });
 
+  const hotelById = new Map(
+    sourceHotels.map((hotel) => [hotel.hotelId, hotel] as const),
+  );
   const prioritizedHotels = sourceHotels.slice().sort(compareHomePriority);
-  const featuredSource = prioritizedHotels.slice(0, FEATURED_LIMIT);
+  const offerOverrideByHotelId = mapOverrides<HomeOfferOverrideDoc>(
+    config.offerOverrides,
+  );
+  const recommendedOverrideByHotelId = mapOverrides<HomeRecommendedOverrideDoc>(
+    config.recommendedOverrides,
+  );
+  const trendingOverrideByHotelId = mapOverrides<HomeTrendingOverrideDoc>(
+    config.trendingOverrides,
+  );
+
+  const curated = config.curated ?? {
+    featuredHotelIds: [],
+    recommendedHotelIds: [],
+    trendingHotelIds: [],
+  };
+
+  const featuredSource = fillMissingHotels(
+    pickByIds(curated.featuredHotelIds, hotelById),
+    prioritizedHotels,
+    FEATURED_LIMIT,
+  );
   const featuredIds = new Set(featuredSource.map((hotel) => hotel.hotelId));
   const remainingHotels = prioritizedHotels.filter(
     (hotel) => !featuredIds.has(hotel.hotelId),
   );
 
-  const featuredOffers = featuredSource.map<HomeOfferItem>((hotel, index) => {
-    const { hasImage: _hasImage, ...hotelPayload } = hotel;
-
-    return {
-      ...hotelPayload,
-      title: hotel.destinationName,
-      subtitle: hotel.priceLabel
-        ? `${hotel.locationLabel} from ${hotel.priceLabel}`
-        : `Discover ${hotel.hotelName} in ${hotel.locationLabel}`,
-      ctaLabel: index === 0 ? 'BOOK NOW' : 'VIEW STAY',
-    };
-  });
-
-  const preferredRecommended = takeUniqueByKey(
-    remainingHotels,
-    RECOMMENDED_LIMIT,
-    (hotel) => hotel.destinationName.toLowerCase(),
-  );
-  const fallbackRecommended = takeUniqueByKey(
-    prioritizedHotels,
-    RECOMMENDED_LIMIT,
-    (hotel) => hotel.destinationName.toLowerCase(),
-  );
+  const recommendedSeed = pickByIds(curated.recommendedHotelIds, hotelById);
   const recommendedSource = fillMissingHotels(
-    preferredRecommended,
-    fallbackRecommended,
+    recommendedSeed.length > 0
+      ? recommendedSeed
+      : takeUniqueByKey(
+          remainingHotels,
+          RECOMMENDED_LIMIT,
+          (hotel) => hotel.destinationName.toLowerCase(),
+        ),
+    takeUniqueByKey(
+      prioritizedHotels,
+      RECOMMENDED_LIMIT,
+      (hotel) => hotel.destinationName.toLowerCase(),
+    ),
     RECOMMENDED_LIMIT,
   );
 
-  const recommendedDestinations = recommendedSource.map<HomeRecommendedItem>((hotel) => {
-    const { hasImage: _hasImage, ...hotelPayload } = hotel;
-
-    return {
-      ...hotelPayload,
-      title: hotel.destinationName,
-      caption: hotel.hotelName,
-    };
-  });
-
+  const trendingSeed = pickByIds(curated.trendingHotelIds, hotelById);
   const trendingSource = fillMissingHotels(
-    remainingHotels.slice(0, TRENDING_LIMIT),
+    trendingSeed.length > 0 ? trendingSeed : remainingHotels.slice(0, TRENDING_LIMIT),
     prioritizedHotels,
     TRENDING_LIMIT,
   );
 
+  const offerCtaLabels = config.sections.offers.ctaLabels?.length
+    ? config.sections.offers.ctaLabels
+    : DEFAULT_OFFER_CTA_LABELS;
+  const offerAccentTones = config.sections.offers.accentTones?.length
+    ? config.sections.offers.accentTones
+    : DEFAULT_OFFER_ACCENT_TONES;
+  const cardHeights = config.sections.recommended.cardHeights?.length
+    ? config.sections.recommended.cardHeights
+    : DEFAULT_RECOMMENDED_CARD_HEIGHTS;
+
+  const featuredOffers = featuredSource.map<HomeOfferItem>((hotel, index) => {
+    const override = offerOverrideByHotelId.get(hotel.hotelId);
+    const { hasImage: _hasImage, ...hotelPayload } = hotel;
+
+    return {
+      ...hotelPayload,
+      title:
+        override && isFilledString(override.title)
+          ? override.title.trim()
+          : hotel.destinationName,
+      subtitle:
+        override && isFilledString(override.subtitle)
+          ? override.subtitle.trim()
+          : hotel.priceLabel
+            ? `${hotel.locationLabel} from ${hotel.priceLabel}`
+            : `Discover ${hotel.hotelName} in ${hotel.locationLabel}`,
+      badgeLabel:
+        override && isFilledString(override.badgeLabel)
+          ? override.badgeLabel.trim()
+          : sections.offers.badgeLabel,
+      ctaLabel:
+        override && isFilledString(override.ctaLabel)
+          ? override.ctaLabel.trim()
+          : offerCtaLabels[index % offerCtaLabels.length],
+      accentTone:
+        override && isFilledString(override.accentTone)
+          ? override.accentTone.trim()
+          : offerAccentTones[index % offerAccentTones.length],
+      route:
+        override && isFilledString(override.route)
+          ? override.route.trim()
+          : buildHotelRoute(hotel.hotelId),
+    };
+  });
+
+  const recommendedDestinations = recommendedSource.map<HomeRecommendedItem>(
+    (hotel, index) => {
+      const override = recommendedOverrideByHotelId.get(hotel.hotelId);
+      const { hasImage: _hasImage, ...hotelPayload } = hotel;
+
+      return {
+        ...hotelPayload,
+        title:
+          override && isFilledString(override.title)
+            ? override.title.trim()
+            : hotel.destinationName,
+        caption:
+          override && isFilledString(override.caption)
+            ? override.caption.trim()
+            : hotel.hotelName,
+        priceLabel:
+          override && isFilledString(override.priceLabel)
+            ? override.priceLabel.trim()
+            : hotel.priceLabel,
+        cardHeight:
+          override?.cardHeight && override.cardHeight > 0
+            ? override.cardHeight
+            : cardHeights[index % cardHeights.length],
+        route:
+          override && isFilledString(override.route)
+            ? override.route.trim()
+            : buildHotelRoute(hotel.hotelId),
+      };
+    },
+  );
+
   const trendingHotels = trendingSource.map<HomeTrendingHotelItem>((hotel) => {
+    const override = trendingOverrideByHotelId.get(hotel.hotelId);
     const { hasImage: _hasImage, ...hotelPayload } = hotel;
 
     return {
       ...hotelPayload,
       name: hotel.hotelName,
       location: hotel.locationLabel,
+      detailsLabel:
+        override && isFilledString(override.detailsLabel)
+          ? override.detailsLabel.trim()
+          : sections.trending.detailsActionLabel,
+      route:
+        override && isFilledString(override.route)
+          ? override.route.trim()
+          : buildHotelRoute(hotel.hotelId),
     };
   });
 
   return {
+    searchCard,
+    categories,
+    sections,
     featuredOffers,
     recommendedDestinations,
     trendingHotels,
