@@ -1,4 +1,6 @@
 import { Trip } from '@/models/Trip.model';
+import { Activity } from '@/models/Activity.model';
+import { Location } from '@/models/Location.model';
 import { env } from '@/config/env';
 
 export interface TripCompanion {
@@ -34,6 +36,16 @@ export interface TripSummary {
   days: TripDay[];
 }
 
+/** A thrown error the controller maps to a 4xx instead of a 500. */
+export class TripError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 const STATUS_LABEL: Record<string, string> = {
   ONGOING: 'ONGOING TRIP',
   UPCOMING: 'UPCOMING TRIP',
@@ -45,6 +57,17 @@ const STATUS_ORDER: Record<string, number> = {
   UPCOMING: 1,
   COMPLETED: 2,
 };
+
+// Time slots a freshly-added item drops into, by current item count.
+const TIME_SLOTS = [
+  '08:30',
+  '10:00',
+  '12:30',
+  '15:00',
+  '17:30',
+  '20:00',
+  '21:30',
+];
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapTrip(d: any): TripSummary {
@@ -78,6 +101,14 @@ function mapTrip(d: any): TripSummary {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+async function resolveLocationName(id: number): Promise<string> {
+  const loc = await Location.findById(id).lean();
+  if (!loc) return '';
+  const parent =
+    loc.parent_id != null ? await Location.findById(loc.parent_id).lean() : null;
+  return parent ? `${loc.name}, ${parent.name}` : loc.name;
+}
+
 export async function getTrips(): Promise<{ trips: TripSummary[] }> {
   const docs = await Trip.find({ user_id: env.demoUserId }).lean();
   const trips = docs
@@ -87,4 +118,57 @@ export async function getTrips(): Promise<{ trips: TripSummary[] }> {
         (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
     );
   return { trips };
+}
+
+/** Append a real activity as a timed item on one day of a trip. */
+export async function addTripItem(
+  tripId: string,
+  dayIndex: number,
+  activityId: number,
+): Promise<TripSummary> {
+  if (!tripId || !Number.isInteger(dayIndex) || !Number.isInteger(activityId)) {
+    throw new TripError(400, 'tripId, dayIndex and activityId are required');
+  }
+
+  const trip = await Trip.findOne({
+    _id: tripId,
+    user_id: env.demoUserId,
+  }).lean();
+  if (!trip) throw new TripError(404, 'Trip not found');
+
+  const activity = await Activity.findOne({
+    _id: activityId,
+    status: 'LIVE',
+    deleted_at: null,
+  }).lean();
+  if (!activity) throw new TripError(404, 'Activity not found');
+
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const day = (trip.days ?? []).find(
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    (d: any) => d.day_index === dayIndex,
+  );
+  if (!day) throw new TripError(400, `Day ${dayIndex} does not exist`);
+
+  const count = Array.isArray(day.items) ? day.items.length : 0;
+  const time = TIME_SLOTS[Math.min(count, TIME_SLOTS.length - 1)];
+  const newItem = {
+    time,
+    title: activity.title,
+    location_name: await resolveLocationName(activity.location_id),
+    category: activity.category ?? 'SIGHTSEEING',
+    activity_id: activity._id,
+    companions: [],
+  };
+
+  await Trip.updateOne(
+    { _id: tripId, 'days.day_index': dayIndex },
+    {
+      $push: { 'days.$.items': newItem },
+      $set: { updated_at: new Date().toISOString() },
+    },
+  );
+
+  const updated = await Trip.findById(tripId).lean();
+  return mapTrip(updated);
 }
