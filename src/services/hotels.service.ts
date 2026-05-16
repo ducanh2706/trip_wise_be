@@ -36,7 +36,8 @@ async function buildLocationPath(startId: number): Promise<string> {
   const names: string[] = [];
   let current: number | null = startId;
   for (let depth = 0; depth < 6 && current !== null; depth++) {
-    const loc = await Location.findById(current).lean();
+    const loc: { name: string; parent_id?: number | null } | null =
+      await Location.findById(current).lean();
     if (!loc) break;
     names.push(loc.name);
     current = loc.parent_id ?? null;
