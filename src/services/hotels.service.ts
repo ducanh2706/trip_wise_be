@@ -2,6 +2,10 @@ import { Hotel } from '@/models/Hotel.model';
 import { Room } from '@/models/Room.model';
 import { Location } from '@/models/Location.model';
 import { Provider } from '@/models/Provider.model';
+import {
+  getHotelReviewSummary,
+  ReviewResponse,
+} from '@/services/reviews.service';
 
 export interface HotelDetailResponse {
   id: number;
@@ -23,6 +27,7 @@ export interface HotelDetailResponse {
   policies: { freeCancellation: boolean };
   isFavoritedByMe: boolean;
   googleMapUrl: string | null;
+  reviewsPreview: ReviewResponse[];
 }
 
 function deriveCategory(starRating: number): string {
@@ -49,11 +54,15 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
   const hotel = await Hotel.findOne({ _id: id, deleted_at: null }).lean();
   if (!hotel) return null;
 
-  const [cheapestRoom, provider, locationPath] = await Promise.all([
-    Room.findOne({ hotel_id: id, deleted_at: null }).sort({ base_price: 1 }).lean(),
-    Provider.findById(hotel.provider_id).lean(),
-    buildLocationPath(hotel.location_id),
-  ]);
+  const [cheapestRoom, provider, locationPath, reviewSummary] =
+    await Promise.all([
+      Room.findOne({ hotel_id: id, deleted_at: null })
+        .sort({ base_price: 1 })
+        .lean(),
+      Provider.findById(hotel.provider_id).lean(),
+      buildLocationPath(hotel.location_id),
+      getHotelReviewSummary(id, 2),
+    ]);
 
   return {
     id: hotel._id,
@@ -62,8 +71,10 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
     address: hotel.address,
     locationPath,
     starRating: hotel.star_rating,
-    rating: hotel.star_rating,
-    reviewCount: 0,
+    // Real average from the reviews collection; fall back to the
+    // star_rating proxy only when a hotel has no reviews yet.
+    rating: reviewSummary.count > 0 ? reviewSummary.average : hotel.star_rating,
+    reviewCount: reviewSummary.count,
     latitude: hotel.latitude ?? null,
     longitude: hotel.longitude ?? null,
     description: hotel.description ?? null,
@@ -80,5 +91,6 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
     policies: { freeCancellation: true },
     isFavoritedByMe: false,
     googleMapUrl: hotel.google_map_url ?? null,
+    reviewsPreview: reviewSummary.preview,
   };
 }
