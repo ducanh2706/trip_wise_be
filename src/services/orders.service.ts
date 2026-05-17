@@ -415,7 +415,7 @@ export async function updateOrderStatus(
   const updated = await BookingItem.findByIdAndUpdate(
     id,
     { item_status: dbStatus, updated_at: now },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
 
   if (!updated) return null;

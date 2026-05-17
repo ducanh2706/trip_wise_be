@@ -7,6 +7,16 @@ const mongoUri = process.env.MONGO_URI;
 if (!mongoUri) {
   throw new Error('MONGO_URI is required but not set in environment');
 }
+if (
+  mongoUri.includes('<cluster>') ||
+  mongoUri.includes('<user>') ||
+  mongoUri.includes('<password>') ||
+  /[<>]/.test(mongoUri)
+) {
+  throw new Error(
+    'MONGO_URI still contains placeholders. Update trip_wise_be/.env with a real MongoDB URI.',
+  );
+}
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',

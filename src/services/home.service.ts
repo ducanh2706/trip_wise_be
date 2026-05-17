@@ -653,7 +653,7 @@ async function getHomeConfig(): Promise<HomeContentDoc> {
     { key: HOME_KEY },
     { $setOnInsert: defaultContent },
     {
-      new: true,
+      returnDocument: 'after',
       upsert: true,
       lean: true,
     },
