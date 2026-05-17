@@ -5,3 +5,5 @@ dist
 .DS_Store
 coverage
 venv
+# Firebase service account
+secrets/

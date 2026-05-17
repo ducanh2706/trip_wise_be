@@ -2,6 +2,7 @@ import { Trip } from '@/models/Trip.model';
 import { Activity } from '@/models/Activity.model';
 import { Location } from '@/models/Location.model';
 import { env } from '@/config/env';
+import { createNotification } from '@/services/notifications.service';
 
 export interface TripCompanion {
   name: string;
@@ -168,6 +169,14 @@ export async function addTripItem(
       $set: { updated_at: new Date().toISOString() },
     },
   );
+
+  await createNotification({
+    type: 'TRIP',
+    title: 'Activity added to your trip',
+    // dayIndex is the real 1-based day_index (no +1).
+    body: `"${activity.title}" was added to day ${dayIndex}.`,
+    actionRoute: `/trip_planner_timeline?id=${tripId}`,
+  });
 
   const updated = await Trip.findById(tripId).lean();
   return mapTrip(updated);

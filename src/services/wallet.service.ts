@@ -5,6 +5,7 @@ import { User } from '@/models/User.model';
 import { Card } from '@/models/Card.model';
 import { WalletTx } from '@/models/WalletTransaction.model';
 import { env } from '@/config/env';
+import { createNotification } from '@/services/notifications.service';
 
 // No loyalty-tier or points-rate data exists in the DB, so these are
 // server-side config for the slice. Adjust freely; not persisted anywhere.
@@ -306,6 +307,14 @@ export async function topUp(
     }),
   ]);
 
+  await createNotification({
+    userId,
+    type: 'SYSTEM',
+    title: 'Top-up successful',
+    body: `₫${amount.toLocaleString('en-US')} was added to your wallet.`,
+    actionRoute: '/wallet_loyalty',
+  });
+
   return (await getWalletOverview())!;
 }
 
@@ -345,6 +354,14 @@ export async function withdraw(
       created_at: now,
     }),
   ]);
+
+  await createNotification({
+    userId,
+    type: 'SYSTEM',
+    title: 'Withdrawal complete',
+    body: `₫${amount.toLocaleString('en-US')} was moved to your card ending ${card.last4}.`,
+    actionRoute: '/wallet_transactions',
+  });
 
   return (await getWalletOverview())!;
 }
