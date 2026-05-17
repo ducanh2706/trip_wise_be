@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import activitiesRoutes from './activities.route';
+import devicesRoutes from './devices.route';
 import homeRoutes from './home.route';
 import healthRoutes from './health.route';
 import hotelsRoutes from './hotels.route';
 import inventoryRoutes from './inventory.route';
+import notificationsRoutes from './notifications.route';
 import ordersRoutes from './orders.route';
 import providerFinanceRoutes from './providerFinance.route';
 import searchRoutes from './search.route';
@@ -13,10 +15,12 @@ import walletRoutes from './wallet.route';
 const router = Router();
 
 router.use('/activities', activitiesRoutes);
+router.use('/devices', devicesRoutes);
 router.use('/home', homeRoutes);
 router.use('/health', healthRoutes);
 router.use('/hotels', hotelsRoutes);
 router.use('/inventory', inventoryRoutes);
+router.use('/notifications', notificationsRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/provider/finance', providerFinanceRoutes);
 router.use('/search', searchRoutes);

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -20,4 +21,10 @@ export const env = {
   // provider (APPROVED, owns hotels with rooms). Override via DEMO_PROVIDER_ID.
   demoProviderId:
     process.env.DEMO_PROVIDER_ID ?? '51bbb04b-196e-4cb1-ba61-6fa4e42fdf68',
+  // Path to a Firebase service-account JSON for FCM push. Absent by default —
+  // push is best-effort and the server runs fine without it (see
+  // src/config/firebase.ts). Override via FIREBASE_SERVICE_ACCOUNT in .env.
+  firebaseServiceAccount:
+    process.env.FIREBASE_SERVICE_ACCOUNT ??
+    path.resolve(process.cwd(), 'secrets/firebase-service-account.json'),
 };

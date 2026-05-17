@@ -6,6 +6,8 @@ import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { User, type UserDoc } from '@/models/User.model';
+import { env } from '@/config/env';
+import { createNotification } from '@/services/notifications.service';
 
 const ORDER_LIMIT = 50;
 const DEFAULT_IMAGE =
@@ -417,6 +419,17 @@ export async function updateOrderStatus(
   ).lean();
 
   if (!updated) return null;
+
+  // Provider-triggered, but notifies the booking owner. In this no-auth
+  // prototype the inbox is pinned to env.demoUserId, so target that so the
+  // push lands on the same device the inbox shows.
+  await createNotification({
+    userId: env.demoUserId,
+    type: 'BOOKING',
+    title: `Booking ${status}`,
+    body: `Your booking status changed to ${status}.`,
+    actionRoute: '/my_trips',
+  });
 
   const item = updated as LeanBookingItem;
   const context = await buildContext([item]);
