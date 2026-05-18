@@ -43,3 +43,17 @@ export function requireAuth(
   }
   next();
 }
+
+export function requireRole(...roles: Array<'PLANNER' | 'PROVIDER'>) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.auth?.userId) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+    if (!roles.includes(req.auth.role)) {
+      res.status(403).json({ message: 'You do not have access to this area' });
+      return;
+    }
+    next();
+  };
+}

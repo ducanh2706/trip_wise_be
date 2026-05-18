@@ -18,7 +18,7 @@ import providerListingsRoutes from './providerListings.route';
 import searchRoutes from './search.route';
 import tripsRoutes from './trips.route';
 import walletRoutes from './wallet.route';
-import { requireAuth } from '@/middlewares/auth';
+import { requireAuth, requireRole } from '@/middlewares/auth';
 
 const router = Router();
 
@@ -35,9 +35,9 @@ router.use('/notifications', requireAuth, notificationsRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/payments', requireAuth, paymentsRoutes);
 router.use('/profile', requireAuth, profileRoutes);
-router.use('/provider/dashboard', providerDashboardRoutes);
-router.use('/provider/finance', providerFinanceRoutes);
-router.use('/provider/listings', providerListingsRoutes);
+router.use('/provider/dashboard', requireRole('PROVIDER'), providerDashboardRoutes);
+router.use('/provider/finance', requireRole('PROVIDER'), providerFinanceRoutes);
+router.use('/provider/listings', requireRole('PROVIDER'), providerListingsRoutes);
 router.use('/search', searchRoutes);
 router.use('/trips', requireAuth, tripsRoutes);
 router.use('/wallet', requireAuth, walletRoutes);

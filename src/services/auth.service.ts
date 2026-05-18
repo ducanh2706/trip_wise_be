@@ -6,6 +6,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { AuthSession } from '@/models/AuthSession.model';
+import { Provider } from '@/models/Provider.model';
 import { User, type UserDoc } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
 import { env } from '@/config/env';
@@ -13,6 +14,8 @@ import { getFirebaseAuthOrNull } from '@/config/firebase';
 
 const MIN_PASSWORD_LENGTH = 8;
 const PASSWORD_KEY_LENGTH = 64;
+const AUTH_ROLES = ['PLANNER', 'PROVIDER'] as const;
+type AuthRole = (typeof AUTH_ROLES)[number];
 
 export interface PublicAuthUser {
   id: string;
@@ -109,6 +112,14 @@ function newExpiryDate(): Date {
   return new Date(Date.now() + env.authSessionTtlDays * 86_400_000);
 }
 
+function normalizeStoredRole(role: unknown): AuthRole {
+  const normalized =
+    typeof role === 'string' ? role.trim().toUpperCase() : 'PLANNER';
+  if (normalized === 'PROVIDER') return 'PROVIDER';
+  if (normalized === 'USER') return 'PLANNER';
+  return 'PLANNER';
+}
+
 function mapUser(user: Partial<UserDoc> & { _id: string }): PublicAuthUser {
   return {
     id: user._id,
@@ -116,7 +127,7 @@ function mapUser(user: Partial<UserDoc> & { _id: string }): PublicAuthUser {
     email: user.email ?? null,
     phone: user.phone ?? null,
     image: user.image ?? null,
-    role: user.role?.trim() || 'USER',
+    role: normalizeStoredRole(user.role),
     status: user.status?.trim() || 'ACTIVE',
   };
 }
@@ -147,6 +158,23 @@ async function ensureUserWallet(userId: string): Promise<void> {
     loyalty_points: 0,
     created_at: now,
     updated_at: now,
+  });
+}
+
+async function ensureProviderProfile(
+  userId: string,
+  displayName: string,
+): Promise<void> {
+  const existing = await Provider.findOne({
+    $or: [{ _id: userId }, { user_id: userId }],
+  }).lean();
+  if (existing) return;
+
+  await Provider.create({
+    _id: userId,
+    user_id: userId,
+    business_name: displayName,
+    status: 'PENDING',
   });
 }
 
@@ -206,7 +234,7 @@ export async function registerUser(
     email_normalized: email,
     phone,
     image: null,
-    role: 'USER',
+    role: 'PLANNER',
     status: 'ACTIVE',
     auth_provider: 'local',
     password_hash: passwordHash,
@@ -215,7 +243,9 @@ export async function registerUser(
     updated_at: new Date().toISOString(),
   });
 
-  await ensureUserWallet(userId);
+  await Promise.all([
+    ensureUserWallet(userId),
+  ]);
 
   const user = await User.findById(userId).lean();
   if (!user) {
@@ -257,10 +287,17 @@ export async function loginUser(
   if (!passwordMatches(password, passwordHash, passwordSalt)) {
     throw new AuthError(401, 'Invalid email or password');
   }
+  const storedRole = normalizeStoredRole(user.role);
 
   const now = new Date().toISOString();
   await Promise.all([
     ensureUserWallet(user._id),
+    storedRole === 'PROVIDER'
+        ? ensureProviderProfile(
+            user._id,
+            user.full_name?.trim() || 'Tripwise Provider',
+          )
+        : Promise.resolve(),
     User.updateOne({ _id: user._id }, { $set: { last_login_at: now, updated_at: now } }),
   ]);
 
@@ -323,18 +360,27 @@ export async function loginWithGoogleIdToken(
       email_normalized: email,
       firebase_uid: firebaseUid,
       image: googlePicture,
-      role: 'USER',
+      role: 'PLANNER',
       status: 'ACTIVE',
       auth_provider: 'google',
       created_at: now,
       updated_at: now,
       last_login_at: now,
     });
-    await ensureUserWallet(userId);
+    await Promise.all([
+      ensureUserWallet(userId),
+    ]);
     user = await User.findById(userId).lean();
   } else {
+    const storedRole = normalizeStoredRole(user.role);
     await Promise.all([
       ensureUserWallet(user._id),
+      storedRole === 'PROVIDER'
+          ? ensureProviderProfile(
+              user._id,
+              user.full_name?.trim() || googleName,
+            )
+          : Promise.resolve(),
       User.updateOne(
         { _id: user._id },
         {
@@ -368,6 +414,7 @@ export async function resolveAuthToken(token: string): Promise<{
   userId: string;
   sessionId: string;
   expiresAt: string;
+  role: AuthRole;
 } | null> {
   const rawToken = token.trim();
   if (!rawToken) return null;
@@ -382,7 +429,9 @@ export async function resolveAuthToken(token: string): Promise<{
     return null;
   }
 
-  const user = await User.findById(session.user_id).select({ _id: 1 }).lean();
+  const user = await User.findById(session.user_id)
+    .select({ _id: 1, role: 1 })
+    .lean();
   if (!user) {
     await AuthSession.deleteOne({ _id: sessionId });
     return null;
@@ -397,6 +446,7 @@ export async function resolveAuthToken(token: string): Promise<{
     userId: session.user_id,
     sessionId,
     expiresAt: expiresAtDate.toISOString(),
+    role: normalizeStoredRole(user.role),
   };
 }
 

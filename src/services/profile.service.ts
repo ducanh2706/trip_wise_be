@@ -62,7 +62,7 @@ export async function getProfile(userId: string): Promise<ProfileResponse> {
     Wallet.findOne({ user_id: userId }).lean(),
     Trip.find({ user_id: userId }).select({ destination: 1 }).lean(),
     ProfileVerification.findById(userId).lean(),
-    Provider.findOne({ user_id: userId }).lean(),
+    Provider.findOne({ $or: [{ user_id: userId }, { _id: userId }] }).lean(),
   ]);
 
   const visited = new Set<string>();
