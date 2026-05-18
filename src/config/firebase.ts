@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { initializeApp, cert, getApps, type App } from 'firebase-admin/app';
+import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import { env } from '@/config/env';
 
@@ -39,4 +40,9 @@ export const isFirebaseEnabled: boolean = initFirebase() !== null;
 export function getMessagingOrNull(): Messaging | null {
   const a = initFirebase();
   return a ? getMessaging(a) : null;
+}
+
+export function getFirebaseAuthOrNull(): Auth | null {
+  const a = initFirebase();
+  return a ? getAuth(a) : null;
 }

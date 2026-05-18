@@ -30,31 +30,31 @@ export async function getFeedHandler(
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const rawLimit = Number(req.query.limit) || 10;
     const limit = Math.min(Math.max(1, rawLimit), 50);
-    res.json(await getFeed(offset, limit));
+    res.json(await getFeed(req.auth!.userId, offset, limit));
   } catch (err) {
     next(err);
   }
 }
 
 export async function getSummaryHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await getSummary());
+    res.json(await getSummary(req.auth!.userId));
   } catch (err) {
     next(err);
   }
 }
 
 export async function getPreferencesHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await getPreferences());
+    res.json(await getPreferences(req.auth!.userId));
   } catch (err) {
     next(err);
   }
@@ -66,19 +66,19 @@ export async function updatePreferencesHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await updatePreferences(req.body));
+    res.json(await updatePreferences(req.auth!.userId, req.body));
   } catch (err) {
     handleNotificationError(err, res, next);
   }
 }
 
 export async function markAllReadHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await markAllRead());
+    res.json(await markAllRead(req.auth!.userId));
   } catch (err) {
     handleNotificationError(err, res, next);
   }
@@ -90,7 +90,7 @@ export async function markReadHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await markRead(String(req.params.id)));
+    res.json(await markRead(req.auth!.userId, String(req.params.id)));
   } catch (err) {
     handleNotificationError(err, res, next);
   }

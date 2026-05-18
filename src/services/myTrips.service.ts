@@ -5,7 +5,6 @@ import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
 import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
-import { env } from '@/config/env';
 
 type UiTab = 'upcoming' | 'completed' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
@@ -139,9 +138,11 @@ function itemTs(item: LeanItem, booking?: LeanBooking): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
-export async function getMyTrips(statusInput?: unknown): Promise<MyTripsResponse> {
+export async function getMyTrips(
+  userId: string,
+  statusInput?: unknown,
+): Promise<MyTripsResponse> {
   const selectedTab = normalizeTab(statusInput);
-  const userId = env.demoUserId;
 
   const bookings = (await Booking.find({ user_id: userId })
     .select({ _id: 1, created_at: 1, updated_at: 1, status: 1 })

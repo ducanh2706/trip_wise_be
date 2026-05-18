@@ -25,6 +25,7 @@ export async function getCheckoutSummaryHandler(
   try {
     res.json(
       await getCheckoutSummary({
+        userId: req.auth!.userId,
         hotelId: req.query.hotelId,
         roomId: req.query.roomId,
         startDate: req.query.startDate,
@@ -46,6 +47,7 @@ export async function completeCheckoutHandler(
     const body = req.body ?? {};
     res.status(201).json(
       await completeCheckout({
+        userId: req.auth!.userId,
         hotelId: body.hotelId,
         roomId: body.roomId,
         startDate: body.startDate,

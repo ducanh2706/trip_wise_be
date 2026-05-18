@@ -8,7 +8,7 @@ export async function getMyTripsHandler(
 ): Promise<void> {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    res.json(await getMyTrips(status));
+    res.json(await getMyTrips(req.auth!.userId, status));
   } catch (error) {
     next(error);
   }

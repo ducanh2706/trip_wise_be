@@ -22,6 +22,10 @@ export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 3000),
   mongoUri,
+  authSessionTtlDays: Math.max(
+    1,
+    Number(process.env.AUTH_SESSION_TTL_DAYS ?? 14) || 14,
+  ),
   // No auth yet — wallet/loyalty is per-user, so the slice pins a demo user
   // (a real USER-role account that has a wallet + payments). Override via
   // DEMO_USER_ID in .env once login lands.

@@ -1,4 +1,3 @@
-import { env } from '@/config/env';
 import { ProfileVerification } from '@/models/ProfileVerification.model';
 import { Provider } from '@/models/Provider.model';
 import { Trip } from '@/models/Trip.model';
@@ -55,8 +54,7 @@ function destinationKey(raw: unknown): string | null {
   return v.length > 0 ? v : null;
 }
 
-export async function getProfile(): Promise<ProfileResponse> {
-  const userId = env.demoUserId;
+export async function getProfile(userId: string): Promise<ProfileResponse> {
   await ensureVerification(userId);
 
   const [user, wallet, trips, verification, provider] = await Promise.all([
@@ -64,7 +62,7 @@ export async function getProfile(): Promise<ProfileResponse> {
     Wallet.findOne({ user_id: userId }).lean(),
     Trip.find({ user_id: userId }).select({ destination: 1 }).lean(),
     ProfileVerification.findById(userId).lean(),
-    Provider.findById(env.demoProviderId).lean(),
+    Provider.findOne({ user_id: userId }).lean(),
   ]);
 
   const visited = new Set<string>();

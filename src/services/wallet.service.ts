@@ -4,7 +4,6 @@ import { Payment } from '@/models/Payment.model';
 import { User } from '@/models/User.model';
 import { Card } from '@/models/Card.model';
 import { WalletTx } from '@/models/WalletTransaction.model';
-import { env } from '@/config/env';
 import { createNotification } from '@/services/notifications.service';
 
 // No loyalty-tier or points-rate data exists in the DB, so these are
@@ -209,8 +208,9 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
     .map(({ _ts, ...rest }) => rest);
 }
 
-export async function getWalletOverview(): Promise<WalletOverviewResponse | null> {
-  const userId = env.demoUserId;
+export async function getWalletOverview(
+  userId: string,
+): Promise<WalletOverviewResponse | null> {
   const wallet = await Wallet.findOne({ user_id: userId }).lean();
   if (!wallet) return null;
 
@@ -239,10 +239,10 @@ export async function getWalletOverview(): Promise<WalletOverviewResponse | null
 }
 
 export async function getTransactionsPage(
+  userId: string,
   offset: number,
   limit: number,
 ): Promise<TransactionPage> {
-  const userId = env.demoUserId;
   const ledger = await buildLedger(userId);
   const items = ledger.slice(offset, offset + limit);
   const nextOffset = offset + items.length;
@@ -271,10 +271,10 @@ function assertAmount(amount: unknown): number {
 }
 
 export async function topUp(
+  userId: string,
   amountInput: unknown,
   cardId?: string,
 ): Promise<WalletOverviewResponse> {
-  const userId = env.demoUserId;
   const wallet = await Wallet.findOne({ user_id: userId });
   if (!wallet) throw new WalletError(404, 'Wallet not found');
   const user = await User.findById(userId).lean();
@@ -315,14 +315,14 @@ export async function topUp(
     actionRoute: '/wallet_loyalty',
   });
 
-  return (await getWalletOverview())!;
+  return (await getWalletOverview(userId))!;
 }
 
 export async function withdraw(
+  userId: string,
   amountInput: unknown,
   cardId?: string,
 ): Promise<WalletOverviewResponse> {
-  const userId = env.demoUserId;
   const wallet = await Wallet.findOne({ user_id: userId });
   if (!wallet) throw new WalletError(404, 'Wallet not found');
   const user = await User.findById(userId).lean();
@@ -363,15 +363,17 @@ export async function withdraw(
     actionRoute: '/wallet_transactions',
   });
 
-  return (await getWalletOverview())!;
+  return (await getWalletOverview(userId))!;
 }
 
-export async function createCard(input: {
-  brand?: string;
-  last4?: string;
-  holderName?: string;
-}): Promise<WalletOverviewResponse> {
-  const userId = env.demoUserId;
+export async function createCard(
+  userId: string,
+  input: {
+    brand?: string;
+    last4?: string;
+    holderName?: string;
+  },
+): Promise<WalletOverviewResponse> {
   const wallet = await Wallet.findOne({ user_id: userId }).lean();
   if (!wallet) throw new WalletError(404, 'Wallet not found');
 
@@ -395,5 +397,5 @@ export async function createCard(input: {
     updated_at: now,
   });
 
-  return (await getWalletOverview())!;
+  return (await getWalletOverview(userId))!;
 }

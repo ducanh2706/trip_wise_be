@@ -26,7 +26,7 @@ export async function registerDeviceHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.status(201).json(await registerDeviceToken(req.body));
+    res.status(201).json(await registerDeviceToken(req.auth!.userId, req.body));
   } catch (err) {
     handleNotificationError(err, res, next);
   }
@@ -47,12 +47,13 @@ export async function unregisterDeviceHandler(
 // Verification helper: exercises createNotification (inbox row + push) with a
 // canned SYSTEM payload, no domain mutation needed.
 export async function testPushHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
     await createNotification({
+      userId: req.auth!.userId,
       type: 'SYSTEM',
       title: 'Test notification',
       body: 'If you see this as a banner, push is working. 🎉',

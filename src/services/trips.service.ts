@@ -1,7 +1,6 @@
 import { Trip } from '@/models/Trip.model';
 import { Activity } from '@/models/Activity.model';
 import { Location } from '@/models/Location.model';
-import { env } from '@/config/env';
 import { createNotification } from '@/services/notifications.service';
 
 export interface TripCompanion {
@@ -110,8 +109,8 @@ async function resolveLocationName(id: number): Promise<string> {
   return parent ? `${loc.name}, ${parent.name}` : loc.name;
 }
 
-export async function getTrips(): Promise<{ trips: TripSummary[] }> {
-  const docs = await Trip.find({ user_id: env.demoUserId }).lean();
+export async function getTrips(userId: string): Promise<{ trips: TripSummary[] }> {
+  const docs = await Trip.find({ user_id: userId }).lean();
   const trips = docs
     .map(mapTrip)
     .sort(
@@ -123,6 +122,7 @@ export async function getTrips(): Promise<{ trips: TripSummary[] }> {
 
 /** Append a real activity as a timed item on one day of a trip. */
 export async function addTripItem(
+  userId: string,
   tripId: string,
   dayIndex: number,
   activityId: number,
@@ -133,7 +133,7 @@ export async function addTripItem(
 
   const trip = await Trip.findOne({
     _id: tripId,
-    user_id: env.demoUserId,
+    user_id: userId,
   }).lean();
   if (!trip) throw new TripError(404, 'Trip not found');
 
@@ -171,6 +171,7 @@ export async function addTripItem(
   );
 
   await createNotification({
+    userId,
     type: 'TRIP',
     title: 'Activity added to your trip',
     // dayIndex is the real 1-based day_index (no +1).

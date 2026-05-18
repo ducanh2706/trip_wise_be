@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import { env } from '@/config/env';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
@@ -185,6 +184,7 @@ function pricing(basePrice: number, nights: number) {
 }
 
 export async function getCheckoutSummary(input: {
+  userId: string;
   hotelId?: unknown;
   roomId?: unknown;
   startDate?: unknown;
@@ -193,8 +193,8 @@ export async function getCheckoutSummary(input: {
 }): Promise<CheckoutSummaryResponse> {
   const [listing, user, wallet] = await Promise.all([
     resolveListing(input.hotelId, input.roomId),
-    User.findById(env.demoUserId).lean(),
-    Wallet.findOne({ user_id: env.demoUserId }).lean(),
+    User.findById(input.userId).lean(),
+    Wallet.findOne({ user_id: input.userId }).lean(),
   ]);
 
   const startDate = parseDateOnly(input.startDate) ?? defaultStartDate();
@@ -245,6 +245,7 @@ export async function getCheckoutSummary(input: {
 }
 
 export async function completeCheckout(input: {
+  userId: string;
   hotelId?: unknown;
   roomId?: unknown;
   startDate?: unknown;
@@ -280,7 +281,7 @@ export async function completeCheckout(input: {
   await Promise.all([
     Booking.create({
       _id: bookingId,
-      user_id: env.demoUserId,
+      user_id: input.userId,
       total_price: bill.subtotal,
       total_amount: bill.subtotal + bill.taxes + bill.fees,
       discount_amount: 0,
@@ -311,7 +312,7 @@ export async function completeCheckout(input: {
     Payment.create({
       _id: paymentId,
       booking_id: bookingId,
-      user_id: env.demoUserId,
+      user_id: input.userId,
       payment_method: paymentMethodDb,
       amount: bill.total,
       transaction_id: `TX-${Date.now()}`,
@@ -322,7 +323,7 @@ export async function completeCheckout(input: {
   ]);
 
   await createNotification({
-    userId: env.demoUserId,
+    userId: input.userId,
     type: 'BOOKING',
     title: 'Booking confirmed',
     body: `${listing.hotelName} has been booked successfully.`,

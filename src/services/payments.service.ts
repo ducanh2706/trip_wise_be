@@ -7,7 +7,6 @@ import { Hotel } from '@/models/Hotel.model';
 import { Payment } from '@/models/Payment.model';
 import { Room } from '@/models/Room.model';
 import { User } from '@/models/User.model';
-import { env } from '@/config/env';
 
 interface PaymentSuccessItem {
   id: string;
@@ -130,10 +129,11 @@ function statusLabel(status: string): string {
 }
 
 export async function getPaymentSuccess(input: {
+  userId: string;
   bookingId?: string;
   paymentId?: string;
 }): Promise<PaymentSuccessResponse> {
-  const userId = env.demoUserId;
+  const userId = input.userId;
 
   const booking =
     input.bookingId && input.bookingId.trim()

@@ -1,11 +1,11 @@
 import { DeviceToken } from '@/models/DeviceToken.model';
-import { env } from '@/config/env';
 import { NotificationError } from '@/services/notifications.service';
 
 // Reuses NotificationError → 4xx (same controller error-mapping pattern as
 // the notifications slice). Scoped to env.demoUserId (no auth yet).
 
 export async function registerDeviceToken(
+  userId: string,
   body: unknown,
 ): Promise<{ ok: true }> {
   const input = (body ?? {}) as Record<string, unknown>;
@@ -23,7 +23,7 @@ export async function registerDeviceToken(
   await DeviceToken.updateOne(
     { _id: token },
     {
-      $set: { user_id: env.demoUserId, platform, updated_at: now },
+      $set: { user_id: userId, platform, updated_at: now },
       $setOnInsert: { created_at: now },
     },
     { upsert: true },

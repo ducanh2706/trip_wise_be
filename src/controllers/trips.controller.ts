@@ -2,12 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import { getTrips, addTripItem, TripError } from '@/services/trips.service';
 
 export async function getTripsHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await getTrips());
+    res.json(await getTrips(req.auth!.userId));
   } catch (err) {
     next(err);
   }
@@ -22,6 +22,7 @@ export async function addTripItemHandler(
     const tripId = String(req.params.id);
     const { dayIndex, activityId } = req.body ?? {};
     const updated = await addTripItem(
+      req.auth!.userId,
       tripId,
       Number(dayIndex),
       Number(activityId),

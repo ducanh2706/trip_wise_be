@@ -11,6 +11,7 @@ export async function getPaymentSuccessHandler(
     const paymentId = typeof req.query.paymentId === 'string' ? req.query.paymentId : undefined;
     res.json(
       await getPaymentSuccess({
+        userId: req.auth!.userId,
         bookingId,
         paymentId,
       }),

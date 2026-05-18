@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import activitiesRoutes from './activities.route';
+import authRoutes from './auth.route';
 import checkoutRoutes from './checkout.route';
 import devicesRoutes from './devices.route';
 import homeRoutes from './home.route';
@@ -17,26 +18,28 @@ import providerListingsRoutes from './providerListings.route';
 import searchRoutes from './search.route';
 import tripsRoutes from './trips.route';
 import walletRoutes from './wallet.route';
+import { requireAuth } from '@/middlewares/auth';
 
 const router = Router();
 
 router.use('/activities', activitiesRoutes);
-router.use('/checkout', checkoutRoutes);
-router.use('/devices', devicesRoutes);
+router.use('/auth', authRoutes);
+router.use('/checkout', requireAuth, checkoutRoutes);
+router.use('/devices', requireAuth, devicesRoutes);
 router.use('/home', homeRoutes);
 router.use('/health', healthRoutes);
 router.use('/hotels', hotelsRoutes);
 router.use('/inventory', inventoryRoutes);
-router.use('/my-trips', myTripsRoutes);
-router.use('/notifications', notificationsRoutes);
+router.use('/my-trips', requireAuth, myTripsRoutes);
+router.use('/notifications', requireAuth, notificationsRoutes);
 router.use('/orders', ordersRoutes);
-router.use('/payments', paymentsRoutes);
-router.use('/profile', profileRoutes);
+router.use('/payments', requireAuth, paymentsRoutes);
+router.use('/profile', requireAuth, profileRoutes);
 router.use('/provider/dashboard', providerDashboardRoutes);
 router.use('/provider/finance', providerFinanceRoutes);
 router.use('/provider/listings', providerListingsRoutes);
 router.use('/search', searchRoutes);
-router.use('/trips', tripsRoutes);
-router.use('/wallet', walletRoutes);
+router.use('/trips', requireAuth, tripsRoutes);
+router.use('/wallet', requireAuth, walletRoutes);
 
 export default router;

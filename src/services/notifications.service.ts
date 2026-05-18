@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Notification } from '@/models/Notification.model';
 import { NotificationPreference } from '@/models/NotificationPreference.model';
-import { env } from '@/config/env';
 import { sendPushToUser } from '@/services/push.service';
 
 // No auth yet — the in-app inbox is per-user, so (like the wallet/trips
@@ -131,10 +130,10 @@ async function ensureDefaultPreferences(
 }
 
 export async function getFeed(
+  userId: string,
   offset: number,
   limit: number,
 ): Promise<FeedPage> {
-  const userId = env.demoUserId;
   const capped = Math.min(Math.max(1, limit), PREVIEW_LIMIT);
 
   const [total, unreadCount, rows] = await Promise.all([
@@ -158,8 +157,7 @@ export async function getFeed(
   };
 }
 
-export async function getSummary(): Promise<NotificationSummary> {
-  const userId = env.demoUserId;
+export async function getSummary(userId: string): Promise<NotificationSummary> {
   const [total, unreadCount] = await Promise.all([
     Notification.countDocuments({ user_id: userId }),
     Notification.countDocuments({ user_id: userId, read: false }),
@@ -167,8 +165,10 @@ export async function getSummary(): Promise<NotificationSummary> {
   return { unreadCount, total };
 }
 
-export async function markRead(id: string): Promise<NotificationSummary> {
-  const userId = env.demoUserId;
+export async function markRead(
+  userId: string,
+  id: string,
+): Promise<NotificationSummary> {
   if (!id || typeof id !== 'string') {
     throw new NotificationError(400, 'Notification id is required');
   }
@@ -179,26 +179,27 @@ export async function markRead(id: string): Promise<NotificationSummary> {
   if (res.matchedCount === 0) {
     throw new NotificationError(404, 'Notification not found');
   }
-  return getSummary();
+  return getSummary(userId);
 }
 
-export async function markAllRead(): Promise<NotificationSummary> {
-  const userId = env.demoUserId;
+export async function markAllRead(userId: string): Promise<NotificationSummary> {
   await Notification.updateMany(
     { user_id: userId, read: false },
     { $set: { read: true } },
   );
-  return getSummary();
+  return getSummary(userId);
 }
 
-export async function getPreferences(): Promise<PreferencesResponse> {
-  return ensureDefaultPreferences(env.demoUserId);
+export async function getPreferences(
+  userId: string,
+): Promise<PreferencesResponse> {
+  return ensureDefaultPreferences(userId);
 }
 
 export async function updatePreferences(
+  userId: string,
   body: unknown,
 ): Promise<PreferencesResponse> {
-  const userId = env.demoUserId;
   const input = (body ?? {}) as Record<string, unknown>;
   const current = await ensureDefaultPreferences(userId);
 
@@ -222,7 +223,7 @@ export async function updatePreferences(
 }
 
 export interface CreateNotificationInput {
-  userId?: string; // defaults to env.demoUserId
+  userId: string;
   type: string; // 'BOOKING' | 'TRIP' | 'MESSAGE' | 'PROMO' | 'SYSTEM'
   title: string;
   body?: string;
@@ -241,7 +242,7 @@ export async function createNotification(
   input: CreateNotificationInput,
 ): Promise<void> {
   try {
-    const userId = input.userId ?? env.demoUserId;
+    const userId = input.userId;
     const id = randomUUID();
     const now = new Date().toISOString();
 
