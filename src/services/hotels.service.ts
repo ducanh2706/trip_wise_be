@@ -2,6 +2,8 @@ import { Hotel } from '@/models/Hotel.model';
 import { Room } from '@/models/Room.model';
 import { Location } from '@/models/Location.model';
 import { Provider } from '@/models/Provider.model';
+import { Booking } from '@/models/Booking.model';
+import { BookingItem } from '@/models/BookingItem.model';
 import {
   getHotelReviewSummary,
   ReviewResponse,
@@ -28,6 +30,63 @@ export interface HotelDetailResponse {
   isFavoritedByMe: boolean;
   googleMapUrl: string | null;
   reviewsPreview: ReviewResponse[];
+  existingBooking: {
+    bookingId: string;
+    bookingItemId: string;
+    status: string;
+    canCancel: boolean;
+  } | null;
+}
+
+const ACTIVE_ITEM_STATUSES = [
+  'PENDING',
+  'REQUESTED',
+  'AWAITING_APPROVAL',
+  'CONFIRMED',
+  'PAID',
+  'ACCEPTED',
+  'APPROVED',
+];
+
+async function resolveExistingBookingForHotel(
+  userId: string | undefined,
+  hotelId: number,
+): Promise<HotelDetailResponse['existingBooking']> {
+  if (!userId) return null;
+
+  const rooms = await Room.find({ hotel_id: hotelId, deleted_at: null })
+    .select({ _id: 1 })
+    .lean();
+  const roomIds = rooms
+    .map((room) => room._id)
+    .filter((id): id is number => typeof id === 'number');
+  if (roomIds.length === 0) return null;
+
+  const candidateItems = await BookingItem.find({
+    room_id: { $in: roomIds },
+    item_status: { $in: ACTIVE_ITEM_STATUSES },
+  })
+    .sort({ created_at: -1, _id: -1 })
+    .lean();
+  if (candidateItems.length === 0) return null;
+
+  const bookingIds = Array.from(new Set(candidateItems.map((item) => item.booking_id)));
+  const bookings = await Booking.find({
+    _id: { $in: bookingIds },
+    user_id: userId,
+  })
+    .select({ _id: 1, status: 1 })
+    .lean();
+  const bookingSet = new Set(bookings.map((booking) => String(booking._id)));
+  const matchedItem = candidateItems.find((item) => bookingSet.has(item.booking_id));
+  if (!matchedItem) return null;
+
+  return {
+    bookingId: matchedItem.booking_id,
+    bookingItemId: matchedItem._id,
+    status: matchedItem.item_status ?? 'CONFIRMED',
+    canCancel: true,
+  };
 }
 
 function deriveCategory(starRating: number): string {
@@ -50,11 +109,14 @@ async function buildLocationPath(startId: number): Promise<string> {
   return names.join(', ');
 }
 
-export async function getHotelDetail(id: number): Promise<HotelDetailResponse | null> {
+export async function getHotelDetail(
+  id: number,
+  userId?: string,
+): Promise<HotelDetailResponse | null> {
   const hotel = await Hotel.findOne({ _id: id, deleted_at: null }).lean();
   if (!hotel) return null;
 
-  const [cheapestRoom, provider, locationPath, reviewSummary] =
+  const [cheapestRoom, provider, locationPath, reviewSummary, existingBooking] =
     await Promise.all([
       Room.findOne({ hotel_id: id, deleted_at: null })
         .sort({ base_price: 1 })
@@ -62,6 +124,7 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
       Provider.findById(hotel.provider_id).lean(),
       buildLocationPath(hotel.location_id),
       getHotelReviewSummary(id, 2),
+      resolveExistingBookingForHotel(userId, id),
     ]);
 
   return {
@@ -92,5 +155,6 @@ export async function getHotelDetail(id: number): Promise<HotelDetailResponse | 
     isFavoritedByMe: false,
     googleMapUrl: hotel.google_map_url ?? null,
     reviewsPreview: reviewSummary.preview,
+    existingBooking,
   };
 }

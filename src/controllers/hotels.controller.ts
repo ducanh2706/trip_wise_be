@@ -13,7 +13,7 @@ export async function getHotelDetailHandler(
       return;
     }
 
-    const detail = await getHotelDetail(id);
+    const detail = await getHotelDetail(id, req.auth?.userId);
     if (!detail) {
       res.status(404).json({ message: 'Hotel not found' });
       return;

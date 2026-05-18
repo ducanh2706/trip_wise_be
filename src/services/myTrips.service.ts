@@ -4,7 +4,9 @@ import { Booking, type BookingDoc } from '@/models/Booking.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
 import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
+import { Payment } from '@/models/Payment.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
+import { createNotification } from '@/services/notifications.service';
 
 type UiTab = 'upcoming' | 'completed' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
@@ -43,6 +45,22 @@ export interface MyTripsResponse {
   items: MyTripCard[];
 }
 
+export interface CancelMyTripResponse {
+  bookingId: string;
+  bookingItemId: string;
+  status: 'CANCELLED';
+  message: string;
+}
+
+export class MyTripsError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80';
 const STATUS_ALIASES: Record<string, UiTab> = {
@@ -59,6 +77,16 @@ const STATUS_ALIASES: Record<string, UiTab> = {
   CANCELED: 'cancelled',
   REJECTED: 'cancelled',
 };
+const CANCELLED_ITEM_STATUSES = new Set(['CANCELLED', 'CANCELED', 'REJECTED']);
+const CANCELLABLE_ITEM_STATUSES = new Set([
+  'PENDING',
+  'REQUESTED',
+  'AWAITING_APPROVAL',
+  'CONFIRMED',
+  'PAID',
+  'ACCEPTED',
+  'APPROVED',
+]);
 
 function normalizeTab(value: unknown): UiTab {
   if (value === 'completed') return 'completed';
@@ -70,6 +98,17 @@ function normalizeItemStatus(value: unknown): UiTab {
   if (typeof value !== 'string') return 'upcoming';
   const key = value.trim().toUpperCase();
   return STATUS_ALIASES[key] ?? 'upcoming';
+}
+
+function normalizeMaybeBookingId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeRawStatus(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toUpperCase();
 }
 
 function formatDateRange(start?: string | null, end?: string | null): string {
@@ -141,8 +180,10 @@ function itemTs(item: LeanItem, booking?: LeanBooking): number {
 export async function getMyTrips(
   userId: string,
   statusInput?: unknown,
+  focusBookingIdInput?: unknown,
 ): Promise<MyTripsResponse> {
   const selectedTab = normalizeTab(statusInput);
+  const focusBookingId = normalizeMaybeBookingId(focusBookingIdInput);
 
   const bookings = (await Booking.find({ user_id: userId })
     .select({ _id: 1, created_at: 1, updated_at: 1, status: 1 })
@@ -209,7 +250,9 @@ export async function getMyTrips(
 
   const mapped: MyTripCard[] = items.map((item) => {
     const type = serviceTypeOf(item);
-    const tab = normalizeItemStatus(item.item_status);
+    const tab = normalizeItemStatus(
+      item.item_status ?? bookingMap.get(item.booking_id)?.status,
+    );
     const amount =
       typeof item.total_price === 'number' && Number.isFinite(item.total_price)
         ? item.total_price
@@ -287,22 +330,128 @@ export async function getMyTrips(
   };
   for (const card of mapped) counts[card.status] += 1;
 
+  const itemById = new Map(items.map((item) => [item._id, item] as const));
   const sorted = mapped
     .slice()
     .sort((left, right) => {
-      const lt = itemTs(items.find((i) => i._id === left.id)!, bookingMap.get(left.bookingId));
-      const rt = itemTs(items.find((i) => i._id === right.id)!, bookingMap.get(right.bookingId));
+      const lt = itemTs(itemById.get(left.id)!, bookingMap.get(left.bookingId));
+      const rt = itemTs(itemById.get(right.id)!, bookingMap.get(right.bookingId));
       if (left.status === 'upcoming' && right.status === 'upcoming') return lt - rt;
       return rt - lt;
     });
 
-  const featured = sorted.find((card) => card.status === 'upcoming') ?? sorted[0] ?? null;
+  const baseFeatured = sorted.find((card) => card.status === 'upcoming') ?? sorted[0] ?? null;
   const filtered = sorted.filter((card) => card.status === selectedTab);
+  const focusIndex =
+    focusBookingId == null
+      ? -1
+      : filtered.findIndex((card) => card.bookingId === focusBookingId);
+  const prioritized =
+    focusIndex > 0
+      ? [
+          filtered[focusIndex],
+          ...filtered.slice(0, focusIndex),
+          ...filtered.slice(focusIndex + 1),
+        ]
+      : filtered;
+  const featured =
+    focusIndex >= 0
+      ? filtered[focusIndex]
+      : baseFeatured;
 
   return {
     selectedTab,
     counts,
     featured,
-    items: filtered,
+    items: prioritized,
+  };
+}
+
+function isCancelledStatus(value: unknown): boolean {
+  return CANCELLED_ITEM_STATUSES.has(normalizeRawStatus(value));
+}
+
+function isCancellableStatus(value: unknown): boolean {
+  return CANCELLABLE_ITEM_STATUSES.has(normalizeRawStatus(value));
+}
+
+export async function cancelMyTrip(
+  userId: string,
+  bookingItemIdInput: unknown,
+): Promise<CancelMyTripResponse> {
+  const bookingItemId = normalizeMaybeBookingId(bookingItemIdInput);
+  if (!bookingItemId) {
+    throw new MyTripsError(400, 'Invalid booking item id');
+  }
+
+  const bookingItem = (await BookingItem.findById(bookingItemId).lean()) as LeanItem | null;
+  if (!bookingItem) {
+    throw new MyTripsError(404, 'Trip not found');
+  }
+
+  const booking = await Booking.findOne({
+    _id: bookingItem.booking_id,
+    user_id: userId,
+  }).lean();
+  if (!booking) {
+    throw new MyTripsError(404, 'Trip not found');
+  }
+
+  if (isCancelledStatus(bookingItem.item_status)) {
+    return {
+      bookingId: bookingItem.booking_id,
+      bookingItemId,
+      status: 'CANCELLED',
+      message: 'Trip has already been cancelled.',
+    };
+  }
+
+  if (!isCancellableStatus(bookingItem.item_status)) {
+    throw new MyTripsError(409, 'This trip cannot be cancelled in its current status');
+  }
+
+  const now = new Date().toISOString();
+  await BookingItem.updateOne(
+    { _id: bookingItemId },
+    { $set: { item_status: 'CANCELLED', updated_at: now } },
+  );
+
+  const siblingItems = (await BookingItem.find({
+    booking_id: bookingItem.booking_id,
+  })
+    .select({ item_status: 1 })
+    .lean()) as Array<Pick<LeanItem, 'item_status'>>;
+  const allCancelled = siblingItems.every((item) => isCancelledStatus(item.item_status));
+
+  await Booking.updateOne(
+    { _id: bookingItem.booking_id },
+    {
+      $set: {
+        status: allCancelled ? 'CANCELLED' : booking.status ?? 'CONFIRMED',
+        updated_at: now,
+      },
+    },
+  );
+
+  if (allCancelled) {
+    await Payment.updateMany(
+      { booking_id: bookingItem.booking_id },
+      { $set: { status: 'CANCELLED', updated_at: now } },
+    );
+  }
+
+  await createNotification({
+    userId,
+    type: 'BOOKING',
+    title: 'Trip cancelled',
+    body: 'Your trip has been cancelled successfully.',
+    actionRoute: '/my_trips?status=cancelled',
+  });
+
+  return {
+    bookingId: bookingItem.booking_id,
+    bookingItemId,
+    status: 'CANCELLED',
+    message: 'Trip cancelled successfully.',
   };
 }
