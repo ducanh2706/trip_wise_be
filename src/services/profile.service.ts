@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { ProfileVerification } from '@/models/ProfileVerification.model';
 import { Provider } from '@/models/Provider.model';
 import { Trip } from '@/models/Trip.model';
@@ -28,6 +30,27 @@ export interface ProfileResponse {
     updatedAt: string | null;
   };
 }
+
+export interface UpdateAvatarResponse {
+  imageUrl: string;
+}
+
+export class ProfileError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const AVATAR_DIR = path.resolve(process.cwd(), 'uploads/avatars');
+const MAX_AVATAR_BYTES = 3 * 1024 * 1024;
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
 function deriveTier(points: number): string {
   if (points >= 15000) return 'Platinum Voyager';
@@ -98,4 +121,78 @@ export async function getProfile(userId: string): Promise<ProfileResponse> {
       updatedAt: verification?.updated_at ?? null,
     },
   };
+}
+
+function normalizeMimeType(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function normalizeFileName(value: unknown): string {
+  if (typeof value !== 'string') return 'avatar';
+  const normalized = value.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+  return normalized.length > 0 ? normalized : 'avatar';
+}
+
+function normalizeBase64(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  const commaIdx = trimmed.indexOf(',');
+  if (commaIdx > 0 && trimmed.slice(0, commaIdx).includes('base64')) {
+    return trimmed.slice(commaIdx + 1).trim();
+  }
+  return trimmed;
+}
+
+export async function updateProfileAvatar(
+  userId: string,
+  body: unknown,
+  publicBaseUrl: string,
+): Promise<UpdateAvatarResponse> {
+  const input = (body ?? {}) as Record<string, unknown>;
+  const mimeType = normalizeMimeType(input.mimeType);
+  const ext = MIME_TO_EXT[mimeType];
+  if (!ext) {
+    throw new ProfileError(400, 'Only JPG, PNG, WEBP images are supported');
+  }
+
+  const base64Data = normalizeBase64(input.dataBase64);
+  if (!base64Data) {
+    throw new ProfileError(400, 'Avatar data is required');
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(base64Data, 'base64');
+  } catch {
+    throw new ProfileError(400, 'Invalid avatar data');
+  }
+
+  if (!buffer.length) {
+    throw new ProfileError(400, 'Avatar data is empty');
+  }
+  if (buffer.length > MAX_AVATAR_BYTES) {
+    throw new ProfileError(413, 'Avatar exceeds 3MB limit');
+  }
+
+  const originalName = normalizeFileName(input.fileName);
+  const now = Date.now();
+  const fileName = `${userId}-${now}-${originalName}.${ext}`;
+  const diskPath = path.join(AVATAR_DIR, fileName);
+  const imagePath = `/uploads/avatars/${fileName}`;
+
+  await mkdir(AVATAR_DIR, { recursive: true });
+  await writeFile(diskPath, buffer);
+
+  const imageUrl = `${publicBaseUrl}${imagePath}`;
+  await User.updateOne(
+    { _id: userId },
+    {
+      $set: {
+        image: imageUrl,
+        updated_at: new Date().toISOString(),
+      },
+    },
+  );
+
+  return { imageUrl };
 }
