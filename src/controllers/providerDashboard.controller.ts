@@ -2,12 +2,12 @@ import { NextFunction, Request, Response } from 'express';
 import { getProviderDashboard } from '@/services/providerDashboard.service';
 
 export async function getProviderDashboardHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await getProviderDashboard());
+    res.json(await getProviderDashboard(req.auth!.userId));
   } catch (error) {
     next(error);
   }

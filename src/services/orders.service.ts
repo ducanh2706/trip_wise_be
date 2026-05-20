@@ -406,6 +406,27 @@ export async function getProviderOrders(input: {
   };
 }
 
+export async function getProviderOrderCounts(
+  providerId?: string,
+): Promise<Record<OrderStatus, number>> {
+  const countsByStatus = await BookingItem.find(buildFilter(providerId))
+    .select({ item_status: 1 })
+    .lean();
+
+  const counts: Record<OrderStatus, number> = {
+    pending: 0,
+    confirmed: 0,
+    completed: 0,
+    cancelled: 0,
+  };
+
+  for (const item of countsByStatus as Array<Pick<LeanBookingItem, 'item_status'>>) {
+    counts[normalizeStatus(item.item_status)] += 1;
+  }
+
+  return counts;
+}
+
 export async function updateOrderStatus(
   id: string,
   status: OrderStatus,
