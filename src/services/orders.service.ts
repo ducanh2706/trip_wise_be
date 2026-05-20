@@ -14,6 +14,7 @@ const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80';
 
 export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+type OrderSort = 'date_desc' | 'date_asc' | 'price_desc' | 'price_asc';
 
 const statusAliases: Record<string, OrderStatus> = {
   pending: 'pending',
@@ -100,6 +101,29 @@ export function parseOrderStatus(value: unknown): OrderStatus | 'all' {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'all') return 'all';
   return statusAliases[normalized] ?? 'pending';
+}
+
+function parseOrderSort(value: unknown): OrderSort {
+  if (typeof value !== 'string') return 'date_desc';
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'date_asc' || normalized === 'price_desc' || normalized === 'price_asc') {
+    return normalized;
+  }
+  return 'date_desc';
+}
+
+function buildMongoSort(sort: OrderSort): Record<string, 1 | -1> {
+  switch (sort) {
+    case 'date_asc':
+      return { start_date: 1, created_at: 1, _id: 1 };
+    case 'price_desc':
+      return { total_price: -1, start_date: -1, created_at: -1, _id: -1 };
+    case 'price_asc':
+      return { total_price: 1, start_date: -1, created_at: -1, _id: -1 };
+    case 'date_desc':
+    default:
+      return { start_date: -1, created_at: -1, _id: -1 };
+  }
 }
 
 function buildStatusLabel(status: OrderStatus): string {
@@ -375,13 +399,15 @@ async function buildContext(items: LeanBookingItem[]): Promise<Parameters<typeof
 export async function getProviderOrders(input: {
   providerId?: string;
   status?: string;
+  sort?: string;
 }): Promise<ProviderOrdersResponse> {
   const selectedStatus = parseOrderStatus(input.status);
+  const selectedSort = parseOrderSort(input.sort);
   const baseFilter = buildFilter(input.providerId);
   const statusFilter = buildFilter(input.providerId, selectedStatus);
 
   const [items, countsByStatus] = await Promise.all([
-    BookingItem.find(statusFilter).sort({ created_at: -1, _id: -1 }).limit(ORDER_LIMIT).lean(),
+    BookingItem.find(statusFilter).sort(buildMongoSort(selectedSort)).limit(ORDER_LIMIT).lean(),
     BookingItem.find(baseFilter).select({ item_status: 1 }).lean(),
   ]);
 

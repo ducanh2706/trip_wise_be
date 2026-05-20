@@ -24,8 +24,9 @@ export async function getProviderOrdersHandler(
         ? req.query.providerId.trim()
         : undefined;
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : undefined;
 
-    const data = await getProviderOrders({ providerId, status });
+    const data = await getProviderOrders({ providerId, status, sort });
     res.json(data);
   } catch (error) {
     next(error);
