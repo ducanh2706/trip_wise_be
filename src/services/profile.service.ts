@@ -25,14 +25,20 @@ export interface ProfileResponse {
   verification: {
     passportUploaded: boolean;
     passportNote: string;
+    passportImageUrl: string | null;
     addressUploaded: boolean;
     addressNote: string;
+    addressImageUrl: string | null;
     updatedAt: string | null;
   };
 }
 
 export interface UpdateAvatarResponse {
   imageUrl: string;
+}
+
+export interface UpdateVerificationDocumentResponse {
+  verification: ProfileResponse['verification'];
 }
 
 export class ProfileError extends Error {
@@ -45,11 +51,40 @@ export class ProfileError extends Error {
 }
 
 const AVATAR_DIR = path.resolve(process.cwd(), 'uploads/avatars');
+const VERIFICATION_DIR = path.resolve(process.cwd(), 'uploads/verifications');
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024;
+const MAX_VERIFICATION_BYTES = 5 * 1024 * 1024;
 const MIME_TO_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
+};
+
+const VERIFICATION_DOCUMENTS = {
+  passport: {
+    uploadedField: 'passport_uploaded',
+    noteField: 'passport_note',
+    imageField: 'passport_image_url',
+    submittedNote: 'Submitted for review',
+  },
+  address: {
+    uploadedField: 'address_uploaded',
+    noteField: 'address_note',
+    imageField: 'address_image_url',
+    submittedNote: 'Submitted for review',
+  },
+} as const;
+
+type VerificationDocumentType = keyof typeof VERIFICATION_DOCUMENTS;
+
+type ProfileVerificationLike = {
+  passport_uploaded?: boolean | null;
+  passport_note?: string | null;
+  passport_image_url?: string | null;
+  address_uploaded?: boolean | null;
+  address_note?: string | null;
+  address_image_url?: string | null;
+  updated_at?: string | null;
 };
 
 function deriveTier(points: number): string {
@@ -65,8 +100,10 @@ async function ensureVerification(userId: string): Promise<void> {
     _id: userId,
     passport_uploaded: false,
     passport_note: 'Not submitted',
+    passport_image_url: null,
     address_uploaded: false,
     address_note: 'Not submitted',
+    address_image_url: null,
     updated_at: new Date().toISOString(),
   });
 }
@@ -75,6 +112,20 @@ function destinationKey(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const v = raw.trim().toLowerCase();
   return v.length > 0 ? v : null;
+}
+
+function serializeVerification(
+  verification: ProfileVerificationLike | null | undefined,
+): ProfileResponse['verification'] {
+  return {
+    passportUploaded: verification?.passport_uploaded ?? false,
+    passportNote: verification?.passport_note ?? 'Not submitted',
+    passportImageUrl: verification?.passport_image_url ?? null,
+    addressUploaded: verification?.address_uploaded ?? false,
+    addressNote: verification?.address_note ?? 'Not submitted',
+    addressImageUrl: verification?.address_image_url ?? null,
+    updatedAt: verification?.updated_at ?? null,
+  };
 }
 
 export async function getProfile(userId: string): Promise<ProfileResponse> {
@@ -113,13 +164,7 @@ export async function getProfile(userId: string): Promise<ProfileResponse> {
       ctaRoute: provider ? '/provider_dashboard' : '/provider_registration_form',
       dashboardRoute: '/provider_dashboard',
     },
-    verification: {
-      passportUploaded: verification?.passport_uploaded ?? false,
-      passportNote: verification?.passport_note ?? 'Not submitted',
-      addressUploaded: verification?.address_uploaded ?? false,
-      addressNote: verification?.address_note ?? 'Not submitted',
-      updatedAt: verification?.updated_at ?? null,
-    },
+    verification: serializeVerification(verification),
   };
 }
 
@@ -143,12 +188,11 @@ function normalizeBase64(value: unknown): string {
   return trimmed;
 }
 
-export async function updateProfileAvatar(
-  userId: string,
-  body: unknown,
-  publicBaseUrl: string,
-): Promise<UpdateAvatarResponse> {
-  const input = (body ?? {}) as Record<string, unknown>;
+function readImageUpload(
+  input: Record<string, unknown>,
+  maxBytes: number,
+  label: string,
+): { buffer: Buffer; ext: string; originalName: string } {
   const mimeType = normalizeMimeType(input.mimeType);
   const ext = MIME_TO_EXT[mimeType];
   if (!ext) {
@@ -157,31 +201,52 @@ export async function updateProfileAvatar(
 
   const base64Data = normalizeBase64(input.dataBase64);
   if (!base64Data) {
-    throw new ProfileError(400, 'Avatar data is required');
+    throw new ProfileError(400, `${label} data is required`);
   }
 
   let buffer: Buffer;
   try {
     buffer = Buffer.from(base64Data, 'base64');
   } catch {
-    throw new ProfileError(400, 'Invalid avatar data');
+    throw new ProfileError(400, `Invalid ${label.toLowerCase()} data`);
   }
 
   if (!buffer.length) {
-    throw new ProfileError(400, 'Avatar data is empty');
+    throw new ProfileError(400, `${label} data is empty`);
   }
-  if (buffer.length > MAX_AVATAR_BYTES) {
-    throw new ProfileError(413, 'Avatar exceeds 3MB limit');
+  if (buffer.length > maxBytes) {
+    const limitMb = Math.round(maxBytes / 1024 / 1024);
+    throw new ProfileError(413, `${label} exceeds ${limitMb}MB limit`);
   }
 
-  const originalName = normalizeFileName(input.fileName);
+  return {
+    buffer,
+    ext,
+    originalName: normalizeFileName(input.fileName),
+  };
+}
+
+function normalizeVerificationDocumentType(value: unknown): VerificationDocumentType {
+  if (value === 'passport' || value === 'address') {
+    return value;
+  }
+  throw new ProfileError(400, 'Unsupported verification document type');
+}
+
+export async function updateProfileAvatar(
+  userId: string,
+  body: unknown,
+  publicBaseUrl: string,
+): Promise<UpdateAvatarResponse> {
+  const input = (body ?? {}) as Record<string, unknown>;
+  const upload = readImageUpload(input, MAX_AVATAR_BYTES, 'Avatar');
   const now = Date.now();
-  const fileName = `${userId}-${now}-${originalName}.${ext}`;
+  const fileName = `${userId}-${now}-${upload.originalName}.${upload.ext}`;
   const diskPath = path.join(AVATAR_DIR, fileName);
   const imagePath = `/uploads/avatars/${fileName}`;
 
   await mkdir(AVATAR_DIR, { recursive: true });
-  await writeFile(diskPath, buffer);
+  await writeFile(diskPath, upload.buffer);
 
   const imageUrl = `${publicBaseUrl}${imagePath}`;
   await User.updateOne(
@@ -195,4 +260,45 @@ export async function updateProfileAvatar(
   );
 
   return { imageUrl };
+}
+
+export async function updateProfileVerificationDocument(
+  userId: string,
+  rawDocumentType: unknown,
+  body: unknown,
+  publicBaseUrl: string,
+): Promise<UpdateVerificationDocumentResponse> {
+  const documentType = normalizeVerificationDocumentType(rawDocumentType);
+  const config = VERIFICATION_DOCUMENTS[documentType];
+  const input = (body ?? {}) as Record<string, unknown>;
+  const upload = readImageUpload(input, MAX_VERIFICATION_BYTES, 'Verification document');
+
+  const now = Date.now();
+  const fileName = `${userId}-${documentType}-${now}-${upload.originalName}.${upload.ext}`;
+  const diskDir = path.join(VERIFICATION_DIR, documentType);
+  const diskPath = path.join(diskDir, fileName);
+  const imagePath = `/uploads/verifications/${documentType}/${fileName}`;
+
+  await mkdir(diskDir, { recursive: true });
+  await writeFile(diskPath, upload.buffer);
+
+  const imageUrl = `${publicBaseUrl}${imagePath}`;
+  const updatedAt = new Date().toISOString();
+  const updates: Record<string, unknown> = {
+    [config.uploadedField]: true,
+    [config.noteField]: config.submittedNote,
+    [config.imageField]: imageUrl,
+    updated_at: updatedAt,
+  };
+
+  const verification = await ProfileVerification.findByIdAndUpdate(
+    userId,
+    {
+      $set: updates,
+      $setOnInsert: { _id: userId },
+    },
+    { new: true, upsert: true },
+  ).lean();
+
+  return { verification: serializeVerification(verification) };
 }
