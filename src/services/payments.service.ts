@@ -176,9 +176,7 @@ export async function getPaymentSuccess(input: {
     .lean();
   const airports = await Airport.find({
     _id: {
-      $in: firstString(
-        flights.flatMap((f) => [f.departure_airport, f.arrival_airport]),
-      ),
+      $in: firstString(flights.flatMap((f) => [f.departure_airport, f.arrival_airport])),
     },
   })
     .select({ _id: 1, name: 1 })
@@ -262,9 +260,11 @@ export async function getPaymentSuccess(input: {
   const destination = first?.title ?? 'Tripwise booking';
   const destinationSubtitle = first?.subtitle ?? null;
   const arrivalDate = first?.startDate ?? null;
+  const firstItemStatus = items.find((item) => item.item_status)?.item_status;
   const bookingStatus = statusLabel(
-    (payment?.status as string | undefined) ??
+    (firstItemStatus as string | undefined) ??
       (booking.status as string | undefined) ??
+      (payment?.status as string | undefined) ??
       'CONFIRMED',
   );
   const amount =

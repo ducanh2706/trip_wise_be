@@ -116,7 +116,10 @@ function ticketCode(): string {
   return `TW-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
-async function resolveListing(hotelIdInput?: unknown, roomIdInput?: unknown): Promise<ActiveListing> {
+async function resolveListing(
+  hotelIdInput?: unknown,
+  roomIdInput?: unknown,
+): Promise<ActiveListing> {
   const hotelId = Number(hotelIdInput);
   const roomId = Number(roomIdInput);
 
@@ -266,11 +269,7 @@ export async function completeCheckout(input: {
   const paymentMethod =
     typeof input.paymentMethod === 'string' ? input.paymentMethod.toLowerCase() : 'card';
   const paymentMethodDb =
-    paymentMethod === 'wallet'
-      ? 'WALLET'
-      : paymentMethod === 'paypal'
-        ? 'PAYPAL'
-        : 'CREDIT_CARD';
+    paymentMethod === 'wallet' ? 'WALLET' : paymentMethod === 'paypal' ? 'PAYPAL' : 'CREDIT_CARD';
   const bill = pricing(listing.basePrice, nights);
   const now = new Date().toISOString();
 
@@ -287,7 +286,7 @@ export async function completeCheckout(input: {
       discount_amount: 0,
       final_amount: bill.total,
       currency: 'USD',
-      status: 'CONFIRMED',
+      status: 'PENDING',
       created_at: now,
       updated_at: now,
       deleted_at: null,
@@ -304,7 +303,7 @@ export async function completeCheckout(input: {
       quantity: guests,
       price_per_unit: listing.basePrice,
       total_price: bill.total,
-      item_status: 'CONFIRMED',
+      item_status: 'PENDING',
       e_ticket_code: ticketCode(),
       created_at: now,
       updated_at: now,
@@ -325,8 +324,8 @@ export async function completeCheckout(input: {
   await createNotification({
     userId: input.userId,
     type: 'BOOKING',
-    title: 'Booking confirmed',
-    body: `${listing.hotelName} has been booked successfully.`,
+    title: 'Booking request received',
+    body: `${listing.hotelName} is waiting for provider confirmation.`,
     actionRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
   });
 
@@ -334,7 +333,7 @@ export async function completeCheckout(input: {
     bookingId,
     paymentId,
     nextRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
-    statusLabel: 'CONFIRMED',
-    message: 'Booking completed successfully.',
+    statusLabel: 'PENDING',
+    message: 'Booking request submitted. The provider will confirm it shortly.',
   };
 }
