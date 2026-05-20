@@ -141,10 +141,7 @@ export class WalletError extends Error {
 }
 
 /** Idempotently make sure the demo user owns at least one (default) card. */
-async function ensureDefaultCard(
-  userId: string,
-  userName?: string | null,
-): Promise<void> {
+async function ensureDefaultCard(userId: string, userName?: string | null): Promise<void> {
   const count = await Card.countDocuments({ user_id: userId });
   if (count > 0) return;
   const now = new Date().toISOString();
@@ -168,49 +165,44 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
     WalletTx.find({ user_id: userId }).lean(),
   ]);
 
-  const fromPayments: Array<WalletTransaction & { _ts: number }> = payments.map(
-    (p) => {
-      const ref = p.booking_id ? `Booking ${p.booking_id}` : 'Payment';
-      const date = formatDate(p.created_at);
-      return {
-        id: p._id,
-        title: titleForMethod(p.payment_method),
-        subtitle: date ? `${ref} • ${date}` : ref,
-        method: p.payment_method ?? 'UNKNOWN',
-        amountVnd: -(p.amount ?? 0),
-        status: p.status ?? 'UNKNOWN',
-        _ts: new Date(p.created_at ?? 0).getTime() || 0,
-      };
-    },
-  );
+  const fromPayments: Array<WalletTransaction & { _ts: number }> = payments.map((p) => {
+    const ref = p.booking_id ? `Booking ${p.booking_id}` : 'Payment';
+    const date = formatDate(p.created_at);
+    return {
+      id: p._id,
+      title: titleForMethod(p.payment_method),
+      subtitle: date ? `${ref} • ${date}` : ref,
+      method: p.payment_method ?? 'UNKNOWN',
+      amountVnd: -(p.amount ?? 0),
+      status: p.status ?? 'UNKNOWN',
+      _ts: new Date(p.created_at ?? 0).getTime() || 0,
+    };
+  });
 
-  const fromWallet: Array<WalletTransaction & { _ts: number }> = walletTxs.map(
-    (t) => {
-      const isTopup = t.type === 'TOPUP';
-      const date = formatDate(t.created_at);
-      const cardLabel = t.card_last4 ? `card •• ${t.card_last4}` : 'card';
-      return {
-        id: t._id,
-        title: isTopup ? 'Wallet top-up' : 'Withdrawal',
-        subtitle:
-          (isTopup ? `From ${cardLabel}` : `To ${cardLabel}`) +
-          (date ? ` • ${date}` : ''),
-        method: t.type,
-        amountVnd: isTopup ? Math.abs(t.amount) : -Math.abs(t.amount),
-        status: t.status ?? 'SUCCESS',
-        _ts: new Date(t.created_at ?? 0).getTime() || 0,
-      };
-    },
-  );
+  const fromWallet: Array<WalletTransaction & { _ts: number }> = walletTxs.map((t) => {
+    const isTopup = t.type === 'TOPUP';
+    const isVipUpgrade = t.type === 'VIP_UPGRADE';
+    const date = formatDate(t.created_at);
+    const cardLabel = t.card_last4 ? `card •• ${t.card_last4}` : 'card';
+    return {
+      id: t._id,
+      title: isTopup ? 'Wallet top-up' : isVipUpgrade ? 'VIP plan upgrade' : 'Withdrawal',
+      subtitle:
+        (isTopup ? `From ${cardLabel}` : isVipUpgrade ? 'Elite Provider plan' : `To ${cardLabel}`) +
+        (date ? ` • ${date}` : ''),
+      method: t.type,
+      amountVnd: isTopup ? Math.abs(t.amount) : -Math.abs(t.amount),
+      status: t.status ?? 'SUCCESS',
+      _ts: new Date(t.created_at ?? 0).getTime() || 0,
+    };
+  });
 
   return [...fromPayments, ...fromWallet]
     .sort((a, b) => b._ts - a._ts)
     .map(({ _ts, ...rest }) => rest);
 }
 
-export async function getWalletOverview(
-  userId: string,
-): Promise<WalletOverviewResponse | null> {
+export async function getWalletOverview(userId: string): Promise<WalletOverviewResponse | null> {
   const wallet = await Wallet.findOne({ user_id: userId }).lean();
   if (!wallet) return null;
 
@@ -380,9 +372,7 @@ export async function createCard(
   const existing = await Card.countDocuments({ user_id: userId });
   const rawLast4 = (input.last4 ?? '').replace(/\D/g, '');
   const last4 =
-    rawLast4.length >= 4
-      ? rawLast4.slice(-4)
-      : String(Math.floor(1000 + Math.random() * 9000));
+    rawLast4.length >= 4 ? rawLast4.slice(-4) : String(Math.floor(1000 + Math.random() * 9000));
   const now = new Date().toISOString();
 
   await Card.create({

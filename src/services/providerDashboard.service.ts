@@ -134,7 +134,15 @@ async function resolveProviderId(userId: string): Promise<string | undefined> {
     $or: [{ _id: userId }, { user_id: userId }],
   }).lean();
 
-  return provider?._id;
+  if (!provider?._id) return undefined;
+
+  const hasProviderData = await Promise.all([
+    BookingItem.exists({ provider_id: provider._id }),
+    Hotel.exists({ provider_id: provider._id, deleted_at: null }),
+    PayoutRequest.exists({ provider_id: provider._id }),
+  ]);
+
+  return hasProviderData.some(Boolean) ? provider._id : undefined;
 }
 
 export async function getProviderDashboard(userId: string): Promise<ProviderDashboardResponse> {
