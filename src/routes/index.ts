@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import activitiesRoutes from './activities.route';
 import authRoutes from './auth.route';
+import chatRoutes from './chat.route';
 import checkoutRoutes from './checkout.route';
 import devicesRoutes from './devices.route';
 import directMessagesRoutes from './directMessages.route';
@@ -26,6 +27,7 @@ const router = Router();
 
 router.use('/activities', activitiesRoutes);
 router.use('/auth', authRoutes);
+router.use('/chat', requireAuth, chatRoutes);
 router.use('/checkout', requireAuth, checkoutRoutes);
 router.use('/devices', requireAuth, devicesRoutes);
 router.use('/messages', requireAuth, directMessagesRoutes);
