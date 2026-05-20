@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Trip } from '@/models/Trip.model';
 import { Activity } from '@/models/Activity.model';
 import { Location } from '@/models/Location.model';
@@ -46,6 +47,13 @@ export class TripError extends Error {
   }
 }
 
+export interface CreateTripInput {
+  title?: unknown;
+  destination?: unknown;
+  startDate?: unknown;
+  endDate?: unknown;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   ONGOING: 'ONGOING TRIP',
   UPCOMING: 'UPCOMING TRIP',
@@ -59,15 +67,60 @@ const STATUS_ORDER: Record<string, number> = {
 };
 
 // Time slots a freshly-added item drops into, by current item count.
-const TIME_SLOTS = [
-  '08:30',
-  '10:00',
-  '12:30',
-  '15:00',
-  '17:30',
-  '20:00',
-  '21:30',
-];
+const TIME_SLOTS = ['08:30', '10:00', '12:30', '15:00', '17:30', '20:00', '21:30'];
+
+const DEFAULT_COVER =
+  'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80';
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseDateOnly(value: unknown): Date | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return null;
+  }
+  const date = new Date(`${value.trim()}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function deriveTripStatus(start: Date, end: Date): 'ONGOING' | 'UPCOMING' | 'COMPLETED' {
+  const currentDate = new Date();
+  const today = new Date(
+    Date.UTC(
+      currentDate.getUTCFullYear(),
+      currentDate.getUTCMonth(),
+      currentDate.getUTCDate(),
+    ),
+  );
+  if (end.getTime() < today.getTime()) return 'COMPLETED';
+  if (start.getTime() > today.getTime()) return 'UPCOMING';
+  return 'ONGOING';
+}
+
+function buildEmptyDays(start: Date, end: Date) {
+  const msPerDay = 86_400_000;
+  const totalDays = Math.min(
+    30,
+    Math.max(1, Math.round((end.getTime() - start.getTime()) / msPerDay) + 1),
+  );
+
+  return Array.from({ length: totalDays }, (_, index) => ({
+    day_index: index + 1,
+    date: dateOnly(addUtcDays(start, index)),
+    items: [],
+  }));
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapTrip(d: any): TripSummary {
@@ -104,8 +157,7 @@ function mapTrip(d: any): TripSummary {
 async function resolveLocationName(id: number): Promise<string> {
   const loc = await Location.findById(id).lean();
   if (!loc) return '';
-  const parent =
-    loc.parent_id != null ? await Location.findById(loc.parent_id).lean() : null;
+  const parent = loc.parent_id != null ? await Location.findById(loc.parent_id).lean() : null;
   return parent ? `${loc.name}, ${parent.name}` : loc.name;
 }
 
@@ -113,11 +165,54 @@ export async function getTrips(userId: string): Promise<{ trips: TripSummary[] }
   const docs = await Trip.find({ user_id: userId }).lean();
   const trips = docs
     .map(mapTrip)
-    .sort(
-      (a, b) =>
-        (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
-    );
+    .sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
   return { trips };
+}
+
+export async function createTrip(userId: string, input: CreateTripInput): Promise<TripSummary> {
+  const title = stringValue(input.title);
+  const destination = stringValue(input.destination);
+  const start = parseDateOnly(input.startDate);
+  const end = parseDateOnly(input.endDate);
+
+  if (!title) throw new TripError(400, 'Trip name is required');
+  if (!destination) throw new TripError(400, 'Destination is required');
+  if (!start || !end) throw new TripError(400, 'Start date and end date must be YYYY-MM-DD');
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (start.getTime() < today.getTime() || end.getTime() < today.getTime()) {
+    throw new TripError(400, 'Trip dates cannot be before today');
+  }
+  if (end.getTime() < start.getTime()) {
+    throw new TripError(400, 'End date must be after start date');
+  }
+
+  const createdAt = new Date().toISOString();
+  const id = `trip-${randomUUID()}`;
+  const doc = await Trip.create({
+    _id: id,
+    user_id: userId,
+    title,
+    destination,
+    status: deriveTripStatus(start, end),
+    cover_image: DEFAULT_COVER,
+    map_image: `https://picsum.photos/seed/${encodeURIComponent(id)}_map/400/400`,
+    start_date: dateOnly(start),
+    end_date: dateOnly(end),
+    days: buildEmptyDays(start, end),
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+
+  await createNotification({
+    userId,
+    type: 'TRIP',
+    title: 'Trip created',
+    body: `"${title}" is ready for planning.`,
+    actionRoute: `/trip_planner_timeline?id=${id}`,
+  });
+
+  return mapTrip(doc.toJSON());
 }
 
 /** Append a real activity as a timed item on one day of a trip. */
