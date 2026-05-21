@@ -1,3 +1,5 @@
+import { type AuthRole } from '@/constants/authRoles';
+
 export {};
 
 declare global {
@@ -7,7 +9,7 @@ declare global {
         userId: string;
         sessionId: string;
         expiresAt: string;
-        role: 'PLANNER' | 'PROVIDER';
+        role: AuthRole;
       };
     }
   }

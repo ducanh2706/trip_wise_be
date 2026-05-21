@@ -182,16 +182,30 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
   const fromWallet: Array<WalletTransaction & { _ts: number }> = walletTxs.map((t) => {
     const isTopup = t.type === 'TOPUP';
     const isVipUpgrade = t.type === 'VIP_UPGRADE';
+    const isProviderPayout = t.type === 'PROVIDER_PAYOUT';
+    const isEscrowIn = t.type === 'BOOKING_ESCROW_IN';
+    const isPayoutOut = t.type === 'PROVIDER_PAYOUT_OUT';
     const date = formatDate(t.created_at);
+    const isPositive = isTopup || isProviderPayout || isEscrowIn;
     const cardLabel = t.card_last4 ? `card •• ${t.card_last4}` : 'card';
     return {
       id: t._id,
-      title: isTopup ? 'Wallet top-up' : isVipUpgrade ? 'VIP plan upgrade' : 'Withdrawal',
+      title: isTopup
+        ? 'Wallet top-up'
+        : isProviderPayout
+          ? 'Provider payout'
+          : isEscrowIn
+            ? 'Booking escrow received'
+            : isPayoutOut
+              ? 'Provider payout released'
+              : isVipUpgrade
+                ? 'VIP plan upgrade'
+                : 'Withdrawal',
       subtitle:
         (isTopup ? `From ${cardLabel}` : isVipUpgrade ? 'Elite Provider plan' : `To ${cardLabel}`) +
         (date ? ` • ${date}` : ''),
       method: t.type,
-      amountVnd: isTopup ? Math.abs(t.amount) : -Math.abs(t.amount),
+      amountVnd: isPositive ? Math.abs(t.amount) : -Math.abs(t.amount),
       status: t.status ?? 'SUCCESS',
       _ts: new Date(t.created_at ?? 0).getTime() || 0,
     };

@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import { type AuthRole } from '@/constants/authRoles';
 import { resolveAuthToken } from '@/services/auth.service';
 
 function extractBearerToken(headerValue: string | undefined): string | null {
@@ -32,11 +33,7 @@ export async function optionalAuth(
   }
 }
 
-export function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.auth?.userId) {
     res.status(401).json({ message: 'Authentication required' });
     return;
@@ -44,7 +41,7 @@ export function requireAuth(
   next();
 }
 
-export function requireRole(...roles: Array<'PLANNER' | 'PROVIDER'>) {
+export function requireRole(...roles: AuthRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.auth?.userId) {
       res.status(401).json({ message: 'Authentication required' });

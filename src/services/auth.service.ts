@@ -1,11 +1,6 @@
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  scryptSync,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AuthSession } from '@/models/AuthSession.model';
+import { normalizeStoredRole, type AuthRole } from '@/constants/authRoles';
 import { Provider } from '@/models/Provider.model';
 import { User, type UserDoc } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
@@ -14,8 +9,6 @@ import { getFirebaseAuthOrNull } from '@/config/firebase';
 
 const MIN_PASSWORD_LENGTH = 8;
 const PASSWORD_KEY_LENGTH = 64;
-const AUTH_ROLES = ['PLANNER', 'PROVIDER'] as const;
-type AuthRole = (typeof AUTH_ROLES)[number];
 
 export interface PublicAuthUser {
   id: string;
@@ -79,10 +72,7 @@ function assertEmail(email: string): void {
 
 function assertPassword(password: unknown): string {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-    throw new AuthError(
-      400,
-      `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
-    );
+    throw new AuthError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   }
   return password;
 }
@@ -91,16 +81,11 @@ function hashPassword(password: string, salt: string): string {
   return scryptSync(password, salt, PASSWORD_KEY_LENGTH).toString('hex');
 }
 
-function passwordMatches(
-  password: string,
-  expectedHash: string,
-  salt: string,
-): boolean {
+function passwordMatches(password: string, expectedHash: string, salt: string): boolean {
   const actualBuffer = Buffer.from(hashPassword(password, salt), 'hex');
   const expectedBuffer = Buffer.from(expectedHash, 'hex');
   return (
-    actualBuffer.length === expectedBuffer.length &&
-    timingSafeEqual(actualBuffer, expectedBuffer)
+    actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
   );
 }
 
@@ -110,14 +95,6 @@ function hashToken(token: string): string {
 
 function newExpiryDate(): Date {
   return new Date(Date.now() + env.authSessionTtlDays * 86_400_000);
-}
-
-function normalizeStoredRole(role: unknown): AuthRole {
-  const normalized =
-    typeof role === 'string' ? role.trim().toUpperCase() : 'PLANNER';
-  if (normalized === 'PROVIDER') return 'PROVIDER';
-  if (normalized === 'USER') return 'PLANNER';
-  return 'PLANNER';
 }
 
 function mapUser(user: Partial<UserDoc> & { _id: string }): PublicAuthUser {
@@ -134,10 +111,7 @@ function mapUser(user: Partial<UserDoc> & { _id: string }): PublicAuthUser {
 
 async function findUserByEmail(emailNormalized: string) {
   return User.findOne({
-    $or: [
-      { email_normalized: emailNormalized },
-      { email: emailNormalized },
-    ],
+    $or: [{ email_normalized: emailNormalized }, { email: emailNormalized }],
   })
     .collation({ locale: 'en', strength: 2 })
     .lean();
@@ -161,10 +135,7 @@ async function ensureUserWallet(userId: string): Promise<void> {
   });
 }
 
-async function ensureProviderProfile(
-  userId: string,
-  displayName: string,
-): Promise<void> {
+async function ensureProviderProfile(userId: string, displayName: string): Promise<void> {
   const existing = await Provider.findOne({
     $or: [{ _id: userId }, { user_id: userId }],
   }).lean();
@@ -174,7 +145,7 @@ async function ensureProviderProfile(
     _id: userId,
     user_id: userId,
     business_name: displayName,
-    status: 'PENDING',
+    status: 'APPROVED',
   });
 }
 
@@ -243,9 +214,7 @@ export async function registerUser(
     updated_at: new Date().toISOString(),
   });
 
-  await Promise.all([
-    ensureUserWallet(userId),
-  ]);
+  await Promise.all([ensureUserWallet(userId)]);
 
   const user = await User.findById(userId).lean();
   if (!user) {
@@ -258,10 +227,7 @@ export async function registerUser(
   };
 }
 
-export async function loginUser(
-  body: unknown,
-  context?: AuthRequestContext,
-): Promise<AuthPayload> {
+export async function loginUser(body: unknown, context?: AuthRequestContext): Promise<AuthPayload> {
   const input = (body ?? {}) as Record<string, unknown>;
   const email = normalizeEmail(input.email);
   const password = assertPassword(input.password);
@@ -272,16 +238,11 @@ export async function loginUser(
     throw new AuthError(401, 'Invalid email or password');
   }
 
-  const passwordHash =
-    typeof user.password_hash === 'string' ? user.password_hash : null;
-  const passwordSalt =
-    typeof user.password_salt === 'string' ? user.password_salt : null;
+  const passwordHash = typeof user.password_hash === 'string' ? user.password_hash : null;
+  const passwordSalt = typeof user.password_salt === 'string' ? user.password_salt : null;
 
   if (!passwordHash || !passwordSalt) {
-    throw new AuthError(
-      401,
-      'This account cannot sign in with a password yet',
-    );
+    throw new AuthError(401, 'This account cannot sign in with a password yet');
   }
 
   if (!passwordMatches(password, passwordHash, passwordSalt)) {
@@ -293,11 +254,8 @@ export async function loginUser(
   await Promise.all([
     ensureUserWallet(user._id),
     storedRole === 'PROVIDER'
-        ? ensureProviderProfile(
-            user._id,
-            user.full_name?.trim() || 'Tripwise Provider',
-          )
-        : Promise.resolve(),
+      ? ensureProviderProfile(user._id, user.full_name?.trim() || 'Tripwise Provider')
+      : Promise.resolve(),
     User.updateOne({ _id: user._id }, { $set: { last_login_at: now, updated_at: now } }),
   ]);
 
@@ -312,18 +270,14 @@ export async function loginWithGoogleIdToken(
   context?: AuthRequestContext,
 ): Promise<AuthPayload> {
   const input = (body ?? {}) as Record<string, unknown>;
-  const idToken =
-    typeof input.idToken === 'string' ? input.idToken.trim() : '';
+  const idToken = typeof input.idToken === 'string' ? input.idToken.trim() : '';
   if (!idToken) {
     throw new AuthError(400, 'Google ID token is required');
   }
 
   const firebaseAuth = getFirebaseAuthOrNull();
   if (!firebaseAuth) {
-    throw new AuthError(
-      503,
-      'Google sign-in is not configured on the server yet',
-    );
+    throw new AuthError(503, 'Google sign-in is not configured on the server yet');
   }
 
   let decoded;
@@ -367,20 +321,15 @@ export async function loginWithGoogleIdToken(
       updated_at: now,
       last_login_at: now,
     });
-    await Promise.all([
-      ensureUserWallet(userId),
-    ]);
+    await Promise.all([ensureUserWallet(userId)]);
     user = await User.findById(userId).lean();
   } else {
     const storedRole = normalizeStoredRole(user.role);
     await Promise.all([
       ensureUserWallet(user._id),
       storedRole === 'PROVIDER'
-          ? ensureProviderProfile(
-              user._id,
-              user.full_name?.trim() || googleName,
-            )
-          : Promise.resolve(),
+        ? ensureProviderProfile(user._id, user.full_name?.trim() || googleName)
+        : Promise.resolve(),
       User.updateOne(
         { _id: user._id },
         {
@@ -429,18 +378,13 @@ export async function resolveAuthToken(token: string): Promise<{
     return null;
   }
 
-  const user = await User.findById(session.user_id)
-    .select({ _id: 1, role: 1 })
-    .lean();
+  const user = await User.findById(session.user_id).select({ _id: 1, role: 1 }).lean();
   if (!user) {
     await AuthSession.deleteOne({ _id: sessionId });
     return null;
   }
 
-  await AuthSession.updateOne(
-    { _id: sessionId },
-    { $set: { last_used_at: new Date() } },
-  );
+  await AuthSession.updateOne({ _id: sessionId }, { $set: { last_used_at: new Date() } });
 
   return {
     userId: session.user_id,

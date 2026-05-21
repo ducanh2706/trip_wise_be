@@ -9,11 +9,7 @@ import {
   updateProviderListing,
 } from '@/services/providerListings.service';
 
-function handleProviderListingError(
-  error: unknown,
-  res: Response,
-  next: NextFunction,
-): void {
+function handleProviderListingError(error: unknown, res: Response, next: NextFunction): void {
   if (error instanceof ProviderListingError) {
     res.status(error.status).json({ message: error.message });
     return;
@@ -56,7 +52,8 @@ export async function createProviderListingHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.status(201).json(await createProviderListing(req.body ?? {}));
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
+    res.status(201).json(await createProviderListing(req.body ?? {}, publicBaseUrl));
   } catch (error) {
     handleProviderListingError(error, res, next);
   }

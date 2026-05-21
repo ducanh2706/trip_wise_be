@@ -7,6 +7,8 @@ import { Room } from '@/models/Room.model';
 import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
 import { createNotification } from '@/services/notifications.service';
+import { env } from '@/config/env';
+import { calculateCommission, creditWallet, ensureWallet } from '@/services/walletLedger.service';
 
 export class CheckoutError extends Error {
   constructor(
@@ -272,10 +274,22 @@ export async function completeCheckout(input: {
     paymentMethod === 'wallet' ? 'WALLET' : paymentMethod === 'paypal' ? 'PAYPAL' : 'CREDIT_CARD';
   const bill = pricing(listing.basePrice, nights);
   const now = new Date().toISOString();
+  const settlement = calculateCommission(bill.total);
 
   const bookingId = randomUUID();
   const bookingItemId = randomUUID();
   const paymentId = randomUUID();
+
+  if (paymentMethodDb === 'WALLET') {
+    await ensureWallet(input.userId);
+    const wallet = await Wallet.findOne({ user_id: input.userId });
+    if (!wallet || (wallet.balance ?? 0) < bill.total) {
+      throw new CheckoutError(400, 'Wallet has insufficient funds');
+    }
+    wallet.balance = (wallet.balance ?? 0) - bill.total;
+    wallet.updated_at = now;
+    await wallet.save();
+  }
 
   await Promise.all([
     Booking.create({
@@ -303,6 +317,13 @@ export async function completeCheckout(input: {
       quantity: guests,
       price_per_unit: listing.basePrice,
       total_price: bill.total,
+      gross_amount: settlement.grossAmount,
+      commission_rate: env.platformCommissionRate,
+      commission_amount: settlement.commissionAmount,
+      provider_net_amount: settlement.providerNetAmount,
+      escrow_status: 'HELD',
+      payout_request_id: null,
+      paid_to_provider_at: null,
       item_status: 'PENDING',
       e_ticket_code: ticketCode(),
       created_at: now,
@@ -320,6 +341,17 @@ export async function completeCheckout(input: {
       updated_at: now,
     }),
   ]);
+
+  await creditWallet({
+    userId: env.adminWalletUserId,
+    amount: bill.total,
+    type: 'BOOKING_ESCROW_IN',
+    status: 'HELD',
+    bookingId,
+    bookingItemId,
+    providerId: listing.providerId,
+    note: `Escrow payment for ${listing.hotelName}`,
+  });
 
   await createNotification({
     userId: input.userId,

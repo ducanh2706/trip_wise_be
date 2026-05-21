@@ -5,6 +5,7 @@ import { Provider } from '@/models/Provider.model';
 import { Trip } from '@/models/Trip.model';
 import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
+import { normalizeStoredRole } from '@/constants/authRoles';
 
 export interface ProfileResponse {
   user: {
@@ -147,6 +148,16 @@ export async function getProfile(userId: string): Promise<ProfileResponse> {
 
   const points = wallet?.loyalty_points ?? 0;
   const displayName = user?.full_name?.trim() || 'Tripwise Traveler';
+  const providerStatus = provider?.status?.trim().toUpperCase() ?? null;
+  const hasProviderAccess =
+    normalizeStoredRole(user?.role) === 'PROVIDER' && providerStatus !== 'INACTIVE';
+  const providerCtaLabel = hasProviderAccess
+    ? 'Open Provider Dashboard'
+    : providerStatus === 'PENDING'
+      ? 'Application Pending'
+      : providerStatus === 'REJECTED'
+        ? 'Resubmit Registration'
+        : 'Start Registration';
 
   return {
     user: {
@@ -159,9 +170,9 @@ export async function getProfile(userId: string): Promise<ProfileResponse> {
       countriesVisited: Math.max(visited.size, 1),
     },
     provider: {
-      isRegistered: Boolean(provider),
-      ctaLabel: provider ? 'Open Provider Dashboard' : 'Start Registration',
-      ctaRoute: provider ? '/provider_dashboard' : '/provider_registration_form',
+      isRegistered: hasProviderAccess,
+      ctaLabel: providerCtaLabel,
+      ctaRoute: hasProviderAccess ? '/provider_dashboard' : '/provider_registration_form',
       dashboardRoute: '/provider_dashboard',
     },
     verification: serializeVerification(verification),

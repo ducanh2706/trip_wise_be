@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { env } from '@/config/env';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
@@ -87,6 +89,13 @@ export class ProviderListingError extends Error {
 
 const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80';
+const LISTING_IMAGE_DIR = path.resolve(process.cwd(), 'uploads/listings');
+const MAX_LISTING_IMAGE_BYTES = 5 * 1024 * 1024;
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
 function listStatus(raw: unknown): ListingStatus {
   if (typeof raw !== 'string') return 'active';
@@ -154,6 +163,66 @@ function numberValue(raw: unknown, fallback: number): number {
   return n;
 }
 
+function normalizeFileName(value: unknown): string {
+  if (typeof value !== 'string') return 'listing';
+  const normalized = value.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+  return normalized.length > 0 ? normalized : 'listing';
+}
+
+function normalizeBase64(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  const commaIdx = trimmed.indexOf(',');
+  if (commaIdx > 0 && trimmed.slice(0, commaIdx).includes('base64')) {
+    return trimmed.slice(commaIdx + 1).trim();
+  }
+  return trimmed;
+}
+
+async function saveListingImage(
+  input: Record<string, unknown>,
+  publicBaseUrl: string,
+): Promise<string> {
+  const directUrl = textValue(input.imageUrl, '');
+  if (directUrl) return directUrl;
+
+  const upload =
+    input.imageUpload && typeof input.imageUpload === 'object'
+      ? (input.imageUpload as Record<string, unknown>)
+      : null;
+  if (!upload) return DEFAULT_IMAGE;
+
+  const mimeType = textValue(upload.mimeType, '').toLowerCase();
+  const ext = MIME_TO_EXT[mimeType];
+  if (!ext) {
+    throw new ProviderListingError(400, 'Only JPG, PNG, WEBP listing images are supported');
+  }
+
+  const base64Data = normalizeBase64(upload.dataBase64);
+  if (!base64Data) {
+    throw new ProviderListingError(400, 'Listing image data is required');
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(base64Data, 'base64');
+  } catch {
+    throw new ProviderListingError(400, 'Invalid listing image data');
+  }
+
+  if (!buffer.length) {
+    throw new ProviderListingError(400, 'Listing image data is empty');
+  }
+  if (buffer.length > MAX_LISTING_IMAGE_BYTES) {
+    throw new ProviderListingError(413, 'Listing image exceeds 5MB limit');
+  }
+
+  await mkdir(LISTING_IMAGE_DIR, { recursive: true });
+  const fileName = `${randomUUID()}-${normalizeFileName(upload.fileName)}.${ext}`;
+  await writeFile(path.join(LISTING_IMAGE_DIR, fileName), buffer);
+  return `${publicBaseUrl}/uploads/listings/${fileName}`;
+}
+
 async function ensureProviderListing(): Promise<void> {
   const existing = await Hotel.findOne({
     provider_id: env.demoProviderId,
@@ -186,8 +255,7 @@ async function ensureProviderListing(): Promise<void> {
     listing_category: 'Hotel',
     image: DEFAULT_IMAGE,
     images: [DEFAULT_IMAGE],
-    description:
-      'Premium provider listing auto-created for dashboard completeness.',
+    description: 'Premium provider listing auto-created for dashboard completeness.',
     amenities: ['WiFi', 'Pool', 'Parking'],
     bedrooms: 2,
     bathrooms: 2,
@@ -268,15 +336,21 @@ export async function listProviderListings(input: {
   status?: unknown;
 }): Promise<ProviderListingsResponse> {
   const query = typeof input.query === 'string' ? input.query.trim() : '';
-  const status = input.status === 'active' || input.status === 'inactive' || input.status === 'pending'
-    ? input.status
-    : 'all';
+  const status =
+    input.status === 'active' || input.status === 'inactive' || input.status === 'pending'
+      ? input.status
+      : 'all';
 
   const { hotels, roomsByHotel } = await listingBase();
   const all = hotels.map((hotel) => {
     const rooms = roomsByHotel.get(numberValue(hotel._id, 0)) ?? [];
-    const room = rooms.slice().sort((a, b) => numberValue(a.base_price, 0) - numberValue(b.base_price, 0))[0];
-    return listingSummary(hotel as unknown as Record<string, unknown>, room as unknown as Record<string, unknown> | undefined);
+    const room = rooms
+      .slice()
+      .sort((a, b) => numberValue(a.base_price, 0) - numberValue(b.base_price, 0))[0];
+    return listingSummary(
+      hotel as unknown as Record<string, unknown>,
+      room as unknown as Record<string, unknown> | undefined,
+    );
   });
 
   const counts = {
@@ -330,11 +404,7 @@ export async function getProviderListingDetail(idRaw: unknown): Promise<Provider
   const images = Array.isArray(hotel.images)
     ? hotel.images.filter((x): x is string => typeof x === 'string' && x.length > 0)
     : [];
-  const imageUrl = pickImage(
-    room?.image ?? null,
-    images[0] ?? null,
-    hotel.image ?? null,
-  );
+  const imageUrl = pickImage(room?.image ?? null, images[0] ?? null, hotel.image ?? null);
 
   return {
     id,
@@ -358,7 +428,7 @@ export async function getProviderListingDetail(idRaw: unknown): Promise<Provider
   };
 }
 
-export async function createProviderListing(input: Record<string, unknown>) {
+export async function createProviderListing(input: Record<string, unknown>, publicBaseUrl: string) {
   const [maxHotel, maxRoom, fallbackLocation] = await Promise.all([
     Hotel.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
     Room.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
@@ -379,6 +449,7 @@ export async function createProviderListing(input: Record<string, unknown>) {
   const amenities = Array.isArray(input.amenities)
     ? input.amenities.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
     : [];
+  const imageUrl = await saveListingImage(input, publicBaseUrl);
   const now = new Date().toISOString();
   const hotelId = (maxHotel?._id ?? 0) + 1;
   const roomIdStart = (maxRoom?._id ?? 0) + 1;
@@ -393,8 +464,8 @@ export async function createProviderListing(input: Record<string, unknown>) {
     status: status === 'active' ? 'LIVE' : status === 'pending' ? 'PENDING' : 'INACTIVE',
     listing_status: status,
     listing_category: category,
-    image: DEFAULT_IMAGE,
-    images: [DEFAULT_IMAGE],
+    image: imageUrl,
+    images: [imageUrl],
     description,
     amenities,
     bedrooms,
@@ -411,7 +482,7 @@ export async function createProviderListing(input: Record<string, unknown>) {
     room_type: index === 0 ? `${category} Suite` : `${category} Room ${index + 1}`,
     capacity: maxGuests,
     base_price: price,
-    image: DEFAULT_IMAGE,
+    image: imageUrl,
     deleted_at: null,
   }));
   await Room.insertMany(roomDocs);
@@ -419,10 +490,7 @@ export async function createProviderListing(input: Record<string, unknown>) {
   return getProviderListingDetail(hotelId);
 }
 
-export async function updateProviderListing(
-  idRaw: unknown,
-  input: Record<string, unknown>,
-) {
+export async function updateProviderListing(idRaw: unknown, input: Record<string, unknown>) {
   const id = Number(idRaw);
   if (!Number.isInteger(id) || id <= 0) {
     throw new ProviderListingError(400, 'Invalid listing id');
@@ -451,17 +519,31 @@ export async function updateProviderListing(
       (x): x is string => typeof x === 'string' && x.trim().length > 0,
     );
   }
-  if (input.bedrooms !== undefined) updates.bedrooms = Math.max(1, Math.round(numberValue(input.bedrooms, 1)));
-  if (input.bathrooms !== undefined) updates.bathrooms = Math.max(1, Math.round(numberValue(input.bathrooms, 1)));
-  if (input.maxGuests !== undefined) updates.max_guests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
+  if (input.bedrooms !== undefined)
+    updates.bedrooms = Math.max(1, Math.round(numberValue(input.bedrooms, 1)));
+  if (input.bathrooms !== undefined)
+    updates.bathrooms = Math.max(1, Math.round(numberValue(input.bathrooms, 1)));
+  if (input.maxGuests !== undefined)
+    updates.max_guests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
 
   await Hotel.updateOne({ _id: id }, { $set: updates });
 
-  if (input.pricePerNight !== undefined || input.price !== undefined || input.maxGuests !== undefined || input.roomType !== undefined) {
-    const room = await Room.findOne({ hotel_id: id, deleted_at: null }).sort({ base_price: 1, _id: 1 });
+  if (
+    input.pricePerNight !== undefined ||
+    input.price !== undefined ||
+    input.maxGuests !== undefined ||
+    input.roomType !== undefined
+  ) {
+    const room = await Room.findOne({ hotel_id: id, deleted_at: null }).sort({
+      base_price: 1,
+      _id: 1,
+    });
     if (room) {
       if (input.pricePerNight !== undefined || input.price !== undefined) {
-        room.base_price = Math.max(1, Math.round(numberValue(input.pricePerNight ?? input.price, room.base_price)));
+        room.base_price = Math.max(
+          1,
+          Math.round(numberValue(input.pricePerNight ?? input.price, room.base_price)),
+        );
       }
       if (input.maxGuests !== undefined) {
         room.capacity = Math.max(1, Math.round(numberValue(input.maxGuests, room.capacity ?? 2)));
@@ -526,9 +608,9 @@ export async function getProviderListingAnalytics(
   }
   const period = parsePeriod(periodRaw);
   const detail = await getProviderListingDetail(id);
-  const roomIds = (
-    await Room.find({ hotel_id: id }).select({ _id: 1 }).lean()
-  ).map((room) => room._id);
+  const roomIds = (await Room.find({ hotel_id: id }).select({ _id: 1 }).lean()).map(
+    (room) => room._id,
+  );
   const items = await BookingItem.find({ room_id: { $in: roomIds } }).lean();
 
   const now = new Date();
@@ -590,7 +672,10 @@ export async function getProviderListingAnalytics(
       views: value.views,
       bookings: value.bookings,
       revenue: inWindow
-        .filter((item) => dayKey(new Date(item.created_at ?? item.start_date ?? now.toISOString())) === key)
+        .filter(
+          (item) =>
+            dayKey(new Date(item.created_at ?? item.start_date ?? now.toISOString())) === key,
+        )
         .reduce((sum, item) => sum + numberValue(item.total_price, 0), 0),
     }))
     .sort((a, b) => b.revenue - a.revenue)
@@ -626,7 +711,9 @@ export async function getProviderListingAnalytics(
     inWindow.length > 0
       ? Math.round(
           (inWindow.reduce((sum, item) => {
-            const start = new Date(item.start_date ?? item.created_at ?? now.toISOString()).getTime();
+            const start = new Date(
+              item.start_date ?? item.created_at ?? now.toISOString(),
+            ).getTime();
             const end = new Date(item.end_date ?? item.start_date ?? now.toISOString()).getTime();
             if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return sum + 1;
             return sum + Math.max(1, Math.round((end - start) / 86_400_000));
@@ -662,7 +749,11 @@ export async function getProviderListingAnalytics(
       revenue: x.revenue,
     })),
     bookingSources: [
-      { label: 'Direct Bookings', percentage: toPct(sourceCount.direct), count: sourceCount.direct },
+      {
+        label: 'Direct Bookings',
+        percentage: toPct(sourceCount.direct),
+        count: sourceCount.direct,
+      },
       { label: 'Tripwise App', percentage: toPct(sourceCount.app), count: sourceCount.app },
       { label: 'Partners', percentage: toPct(sourceCount.partner), count: sourceCount.partner },
     ],

@@ -7,9 +7,10 @@ import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { PayoutRequest, type PayoutRequestDoc } from '@/models/PayoutRequest.model';
 import { Provider, type ProviderDoc } from '@/models/Provider.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
+import { PLATFORM_COMMISSION_RATE, calculateCommission } from '@/services/walletLedger.service';
 
 const CURRENCY = 'VND';
-const SERVICE_FEE_RATE = 0.08;
+const SERVICE_FEE_RATE = PLATFORM_COMMISSION_RATE;
 const DEFAULT_TX_LIMIT = 10;
 
 type Period = 'weekly' | 'monthly' | 'yearly';
@@ -17,7 +18,11 @@ type TxStatus = 'all' | 'paid' | 'pending' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
 
 type LeanProvider = Pick<ProviderDoc, '_id' | 'business_name'>;
-type LeanItem = BookingItemDoc;
+type LeanItem = BookingItemDoc & {
+  commission_amount?: number | null;
+  provider_net_amount?: number | null;
+  escrow_status?: string | null;
+};
 type LeanRoom = Pick<RoomDoc, '_id' | 'hotel_id' | 'room_type'>;
 type LeanHotel = Pick<HotelDoc, '_id' | 'name'>;
 type LeanFlight = Pick<
@@ -166,8 +171,39 @@ function amountOf(item: LeanItem): number {
     : 0;
 }
 
+function settlementOf(item: LeanItem) {
+  const computed = calculateCommission(amountOf(item));
+  return {
+    grossAmount: computed.grossAmount,
+    commissionAmount:
+      typeof item.commission_amount === 'number' && Number.isFinite(item.commission_amount)
+        ? item.commission_amount
+        : computed.commissionAmount,
+    providerNetAmount:
+      typeof item.provider_net_amount === 'number' && Number.isFinite(item.provider_net_amount)
+        ? item.provider_net_amount
+        : computed.providerNetAmount,
+  };
+}
+
+function netAmountOf(item: LeanItem): number {
+  return settlementOf(item).providerNetAmount;
+}
+
+function commissionOf(item: LeanItem): number {
+  return settlementOf(item).commissionAmount;
+}
+
 function isEarned(item: LeanItem): boolean {
   return itemStatus(item.item_status) === 'paid';
+}
+
+function isHeldForPayout(item: LeanItem): boolean {
+  return isEarned(item) && (item.escrow_status ?? '').toUpperCase() === 'HELD';
+}
+
+function isPaidOut(item: LeanItem): boolean {
+  return isEarned(item) && (item.escrow_status ?? '').toUpperCase() === 'PAID_OUT';
 }
 
 function formatCurrency(value: number): string {
@@ -305,7 +341,7 @@ function bucketConfig(period: Period, anchor: Date) {
 function sumInRange(items: LeanItem[], start: Date, end: Date): number {
   return items.reduce((sum, item) => {
     const date = itemDate(item);
-    return date >= start && date < end ? sum + amountOf(item) * (1 - SERVICE_FEE_RATE) : sum;
+    return date >= start && date < end ? sum + netAmountOf(item) : sum;
   }, 0);
 }
 
@@ -458,10 +494,17 @@ function toTransaction(
     subtitle: description.subtitle,
     date: formatDate(createdAt),
     time: formatTime(createdAt),
-    amount: amountOf(item),
-    displayAmount: formatCurrency(amountOf(item)),
+    amount: netAmountOf(item),
+    displayAmount: formatCurrency(netAmountOf(item)),
     status,
-    statusLabel: status === 'paid' ? 'PAID' : status === 'cancelled' ? 'CANCELLED' : 'PENDING',
+    statusLabel:
+      status === 'paid'
+        ? (item.escrow_status ?? '').toUpperCase() === 'PAID_OUT'
+          ? 'PAID OUT'
+          : 'HELD'
+        : status === 'cancelled'
+          ? 'CANCELLED'
+          : 'PENDING',
     serviceType: description.serviceType,
     iconKey: description.iconKey,
     createdAt,
@@ -521,10 +564,12 @@ export async function getProviderFinance(input: {
   ]);
   const items = itemsRaw as LeanItem[];
   const earnedItems = items.filter(isEarned);
+  const heldItems = items.filter(isHeldForPayout);
+  const paidOutItems = items.filter(isPaidOut);
   const servicesProvided = earnedItems.reduce((sum, item) => sum + amountOf(item), 0);
-  const serviceFees = servicesProvided * SERVICE_FEE_RATE;
-  const totalLifetimeEarnings = servicesProvided - serviceFees;
-  const availableForPayout = Math.max(totalLifetimeEarnings - committedPayoutTotal(requests), 0);
+  const serviceFees = earnedItems.reduce((sum, item) => sum + commissionOf(item), 0);
+  const totalLifetimeEarnings = paidOutItems.reduce((sum, item) => sum + netAmountOf(item), 0);
+  const availableForPayout = heldItems.reduce((sum, item) => sum + netAmountOf(item), 0);
   const history = buildHistory(items, period);
   const context = await loadContext(items.slice(0, 100));
   const allTransactions = items.map((item) => toTransaction(item, context));
