@@ -203,7 +203,7 @@ function readImageUpload(
   input: Record<string, unknown>,
   maxBytes: number,
   label: string,
-): { buffer: Buffer; ext: string; originalName: string } {
+): { buffer: Buffer; ext: string; mimeType: string; originalName: string } {
   const mimeType = normalizeMimeType(input.mimeType);
   const ext = MIME_TO_EXT[mimeType];
   if (!ext) {
@@ -233,6 +233,7 @@ function readImageUpload(
   return {
     buffer,
     ext,
+    mimeType,
     originalName: normalizeFileName(input.fileName),
   };
 }
@@ -251,15 +252,7 @@ export async function updateProfileAvatar(
 ): Promise<UpdateAvatarResponse> {
   const input = (body ?? {}) as Record<string, unknown>;
   const upload = readImageUpload(input, MAX_AVATAR_BYTES, 'Avatar');
-  const now = Date.now();
-  const fileName = `${userId}-${now}-${upload.originalName}.${upload.ext}`;
-  const diskPath = path.join(AVATAR_DIR, fileName);
-  const imagePath = `/uploads/avatars/${fileName}`;
-
-  await mkdir(AVATAR_DIR, { recursive: true });
-  await writeFile(diskPath, upload.buffer);
-
-  const imageUrl = `${publicBaseUrl}${imagePath}`;
+  const imageUrl = `data:${upload.mimeType};base64,${upload.buffer.toString('base64')}`;
   await User.updateOne(
     { _id: userId },
     {
