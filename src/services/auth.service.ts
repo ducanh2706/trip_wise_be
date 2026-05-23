@@ -5,7 +5,7 @@ import { Provider } from '@/models/Provider.model';
 import { User, type UserDoc } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
 import { env } from '@/config/env';
-import { getFirebaseAuthOrNull } from '@/config/firebase';
+import { canVerifyFirebaseIdTokens, verifyFirebaseIdToken } from '@/config/firebase';
 
 const MIN_PASSWORD_LENGTH = 8;
 const PASSWORD_KEY_LENGTH = 64;
@@ -275,14 +275,13 @@ export async function loginWithGoogleIdToken(
     throw new AuthError(400, 'Google ID token is required');
   }
 
-  const firebaseAuth = getFirebaseAuthOrNull();
-  if (!firebaseAuth) {
+  if (!canVerifyFirebaseIdTokens()) {
     throw new AuthError(503, 'Google sign-in is not configured on the server yet');
   }
 
   let decoded;
   try {
-    decoded = await firebaseAuth.verifyIdToken(idToken);
+    decoded = await verifyFirebaseIdToken(idToken);
   } catch {
     throw new AuthError(401, 'Google sign-in token is invalid or expired');
   }

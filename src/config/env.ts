@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 
@@ -9,6 +10,53 @@ if (!mongoUri) {
 }
 
 const llmModel = process.env.LLM_MODEL ?? 'gemini-2.5-flash';
+const defaultFirebaseServiceAccount = path.resolve(
+  process.cwd(),
+  'secrets/firebase-service-account.json',
+);
+const firebaseServiceAccount =
+  process.env.FIREBASE_SERVICE_ACCOUNT ?? defaultFirebaseServiceAccount;
+
+function readJsonFile(filePath: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function discoverFirebaseProjectId(): string {
+  const fromEnv =
+    process.env.FIREBASE_PROJECT_ID ??
+    process.env.GCLOUD_PROJECT ??
+    process.env.GOOGLE_CLOUD_PROJECT ??
+    '';
+  if (fromEnv.trim()) return fromEnv.trim();
+
+  const serviceAccount = readJsonFile(firebaseServiceAccount);
+  const serviceProjectId = serviceAccount?.project_id;
+  if (typeof serviceProjectId === 'string' && serviceProjectId.trim()) {
+    return serviceProjectId.trim();
+  }
+
+  const googleServicesCandidates = [
+    path.resolve(process.cwd(), '../trip_wise/android/app/google-services.json'),
+    path.resolve(process.cwd(), 'android/app/google-services.json'),
+  ];
+  for (const candidate of googleServicesCandidates) {
+    const googleServices = readJsonFile(candidate);
+    const projectInfo = googleServices?.project_info;
+    if (projectInfo && typeof projectInfo === 'object') {
+      const projectId = (projectInfo as Record<string, unknown>).project_id;
+      if (typeof projectId === 'string' && projectId.trim()) {
+        return projectId.trim();
+      }
+    }
+  }
+
+  return '';
+}
+
 if (
   mongoUri.includes('<cluster>') ||
   mongoUri.includes('<user>') ||
@@ -40,9 +88,8 @@ export const env = {
   // Path to a Firebase service-account JSON for FCM push. Absent by default —
   // push is best-effort and the server runs fine without it (see
   // src/config/firebase.ts). Override via FIREBASE_SERVICE_ACCOUNT in .env.
-  firebaseServiceAccount:
-    process.env.FIREBASE_SERVICE_ACCOUNT ??
-    path.resolve(process.cwd(), 'secrets/firebase-service-account.json'),
+  firebaseServiceAccount,
+  firebaseProjectId: discoverFirebaseProjectId(),
   llmApiKey:
     process.env.GEMINI_API_KEY ?? process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY ?? '',
   llmApiUrl:
