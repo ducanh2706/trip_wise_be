@@ -107,11 +107,57 @@ function addDays(iso: string, days: number): string {
   return toIsoDateOnly(d);
 }
 
+function hasInputValue(raw: unknown): boolean {
+  return typeof raw === 'string' ? raw.trim().length > 0 : raw != null;
+}
+
 function nightsBetween(start: string, end: string): number {
   const s = new Date(`${start}T00:00:00.000Z`).getTime();
   const e = new Date(`${end}T00:00:00.000Z`).getTime();
   if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 1;
   return Math.max(1, Math.round((e - s) / 86_400_000));
+}
+
+function resolveBookingDetails(input: {
+  startDate?: unknown;
+  endDate?: unknown;
+  guests?: unknown;
+}): {
+  startDate: string;
+  endDate: string;
+  nights: number;
+  guests: number;
+} {
+  const startDate = parseDateOnly(input.startDate);
+  const endDate = parseDateOnly(input.endDate);
+  if (hasInputValue(input.startDate) && !startDate) {
+    throw new CheckoutError(400, 'Please choose valid booking dates');
+  }
+  if (hasInputValue(input.endDate) && !endDate) {
+    throw new CheckoutError(400, 'Please choose valid booking dates');
+  }
+
+  const resolvedStartDate = startDate ?? defaultStartDate();
+  const resolvedEndDate = endDate ?? addDays(resolvedStartDate, 2);
+  const today = toIsoDateOnly(new Date());
+  if (resolvedStartDate < today) {
+    throw new CheckoutError(400, 'Start date cannot be in the past');
+  }
+  if (resolvedEndDate <= resolvedStartDate) {
+    throw new CheckoutError(400, 'End date must be after start date');
+  }
+
+  const guestCount = Number(input.guests);
+  if (hasInputValue(input.guests) && (!Number.isFinite(guestCount) || guestCount < 1)) {
+    throw new CheckoutError(400, 'At least 1 guest is required');
+  }
+
+  return {
+    startDate: resolvedStartDate,
+    endDate: resolvedEndDate,
+    nights: nightsBetween(resolvedStartDate, resolvedEndDate),
+    guests: Math.max(1, Math.floor(guestCount || 2)),
+  };
 }
 
 function ticketCode(): string {
@@ -202,10 +248,7 @@ export async function getCheckoutSummary(input: {
     Wallet.findOne({ user_id: input.userId }).lean(),
   ]);
 
-  const startDate = parseDateOnly(input.startDate) ?? defaultStartDate();
-  const endDate = parseDateOnly(input.endDate) ?? addDays(startDate, 2);
-  const nights = nightsBetween(startDate, endDate);
-  const guests = Math.max(1, Number(input.guests) || 2);
+  const { startDate, endDate, nights, guests } = resolveBookingDetails(input);
   const bill = pricing(listing.basePrice, nights);
 
   return {
@@ -264,10 +307,7 @@ export async function completeCheckout(input: {
   }
 
   const listing = await resolveListing(input.hotelId, input.roomId);
-  const startDate = parseDateOnly(input.startDate) ?? defaultStartDate();
-  const endDate = parseDateOnly(input.endDate) ?? addDays(startDate, 2);
-  const nights = nightsBetween(startDate, endDate);
-  const guests = Math.max(1, Number(input.guests) || 2);
+  const { startDate, endDate, nights, guests } = resolveBookingDetails(input);
   const paymentMethod =
     typeof input.paymentMethod === 'string' ? input.paymentMethod.toLowerCase() : 'card';
   const paymentMethodDb =
