@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { env } from '@/config/env';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
@@ -223,9 +222,9 @@ async function saveListingImage(
   return `${publicBaseUrl}/uploads/listings/${fileName}`;
 }
 
-async function ensureProviderListing(): Promise<void> {
+async function ensureProviderListing(providerId: string): Promise<void> {
   const existing = await Hotel.findOne({
-    provider_id: env.demoProviderId,
+    provider_id: providerId,
     deleted_at: null,
   })
     .select({ _id: 1 })
@@ -245,7 +244,7 @@ async function ensureProviderListing(): Promise<void> {
 
   await Hotel.create({
     _id: hotelId,
-    provider_id: env.demoProviderId,
+    provider_id: providerId,
     location_id: fallbackLocation._id,
     name: 'Tripwise Signature Residence',
     address: fallbackLocation.name,
@@ -275,12 +274,12 @@ async function ensureProviderListing(): Promise<void> {
   });
 }
 
-async function listingBase() {
-  await ensureProviderListing();
+async function listingBase(providerId: string) {
+  await ensureProviderListing(providerId);
 
   const [hotels, rooms] = await Promise.all([
     Hotel.find({
-      provider_id: env.demoProviderId,
+      provider_id: providerId,
       deleted_at: null,
     }).lean(),
     Room.find({ deleted_at: null }).lean(),
@@ -332,6 +331,7 @@ function listingSummary(
 }
 
 export async function listProviderListings(input: {
+  providerId: string;
   query?: unknown;
   status?: unknown;
 }): Promise<ProviderListingsResponse> {
@@ -341,7 +341,7 @@ export async function listProviderListings(input: {
       ? input.status
       : 'all';
 
-  const { hotels, roomsByHotel } = await listingBase();
+  const { hotels, roomsByHotel } = await listingBase(input.providerId);
   const all = hotels.map((hotel) => {
     const rooms = roomsByHotel.get(numberValue(hotel._id, 0)) ?? [];
     const room = rooms
@@ -384,7 +384,10 @@ export async function listProviderListings(input: {
   return { query, status, counts, featured, items: filtered };
 }
 
-export async function getProviderListingDetail(idRaw: unknown): Promise<ProviderListingDetail> {
+export async function getProviderListingDetail(
+  providerId: string,
+  idRaw: unknown,
+): Promise<ProviderListingDetail> {
   const id = Number(idRaw);
   if (!Number.isInteger(id) || id <= 0) {
     throw new ProviderListingError(400, 'Invalid listing id');
@@ -392,7 +395,7 @@ export async function getProviderListingDetail(idRaw: unknown): Promise<Provider
 
   const hotel = await Hotel.findOne({
     _id: id,
-    provider_id: env.demoProviderId,
+    provider_id: providerId,
     deleted_at: null,
   }).lean();
   if (!hotel) throw new ProviderListingError(404, 'Listing not found');
@@ -428,7 +431,11 @@ export async function getProviderListingDetail(idRaw: unknown): Promise<Provider
   };
 }
 
-export async function createProviderListing(input: Record<string, unknown>, publicBaseUrl: string) {
+export async function createProviderListing(
+  providerId: string,
+  input: Record<string, unknown>,
+  publicBaseUrl: string,
+) {
   const [maxHotel, maxRoom, fallbackLocation] = await Promise.all([
     Hotel.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
     Room.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
@@ -456,7 +463,7 @@ export async function createProviderListing(input: Record<string, unknown>, publ
 
   await Hotel.create({
     _id: hotelId,
-    provider_id: env.demoProviderId,
+    provider_id: providerId,
     location_id: fallbackLocation._id,
     name: title,
     address,
@@ -487,17 +494,21 @@ export async function createProviderListing(input: Record<string, unknown>, publ
   }));
   await Room.insertMany(roomDocs);
 
-  return getProviderListingDetail(hotelId);
+  return getProviderListingDetail(providerId, hotelId);
 }
 
-export async function updateProviderListing(idRaw: unknown, input: Record<string, unknown>) {
+export async function updateProviderListing(
+  providerId: string,
+  idRaw: unknown,
+  input: Record<string, unknown>,
+) {
   const id = Number(idRaw);
   if (!Number.isInteger(id) || id <= 0) {
     throw new ProviderListingError(400, 'Invalid listing id');
   }
   const hotel = await Hotel.findOne({
     _id: id,
-    provider_id: env.demoProviderId,
+    provider_id: providerId,
     deleted_at: null,
   });
   if (!hotel) throw new ProviderListingError(404, 'Listing not found');
@@ -555,17 +566,20 @@ export async function updateProviderListing(idRaw: unknown, input: Record<string
     }
   }
 
-  return getProviderListingDetail(id);
+  return getProviderListingDetail(providerId, id);
 }
 
-export async function deleteProviderListing(idRaw: unknown): Promise<{ ok: true }> {
+export async function deleteProviderListing(
+  providerId: string,
+  idRaw: unknown,
+): Promise<{ ok: true }> {
   const id = Number(idRaw);
   if (!Number.isInteger(id) || id <= 0) {
     throw new ProviderListingError(400, 'Invalid listing id');
   }
   const now = new Date().toISOString();
   const res = await Hotel.updateOne(
-    { _id: id, provider_id: env.demoProviderId, deleted_at: null },
+    { _id: id, provider_id: providerId, deleted_at: null },
     {
       $set: {
         deleted_at: now,
@@ -599,6 +613,7 @@ function truncateDayLabel(key: string): string {
 }
 
 export async function getProviderListingAnalytics(
+  providerId: string,
   idRaw: unknown,
   periodRaw: unknown,
 ): Promise<ProviderListingAnalytics> {
@@ -607,7 +622,7 @@ export async function getProviderListingAnalytics(
     throw new ProviderListingError(400, 'Invalid listing id');
   }
   const period = parsePeriod(periodRaw);
-  const detail = await getProviderListingDetail(id);
+  const detail = await getProviderListingDetail(providerId, id);
   const roomIds = (await Room.find({ hotel_id: id }).select({ _id: 1 }).lean()).map(
     (room) => room._id,
   );

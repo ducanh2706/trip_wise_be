@@ -392,25 +392,7 @@ async function resolveProvider(providerId?: string): Promise<LeanProvider> {
     if (!provider) throw new ProviderFinanceError(404, 'Provider not found');
     return provider;
   }
-
-  const recentItem = (await BookingItem.findOne({})
-    .select({ provider_id: 1 })
-    .sort({ created_at: -1, _id: -1 })
-    .lean()) as Pick<LeanItem, 'provider_id'> | null;
-
-  const provider = recentItem?.provider_id
-    ? ((await Provider.findById(recentItem.provider_id)
-        .select({ _id: 1, business_name: 1 })
-        .lean()) as LeanProvider | null)
-    : null;
-  if (provider) return provider;
-
-  const fallback = (await Provider.findOne({})
-    .select({ _id: 1, business_name: 1 })
-    .sort({ _id: 1 })
-    .lean()) as LeanProvider | null;
-  if (!fallback) throw new ProviderFinanceError(404, 'No provider found');
-  return fallback;
+  throw new ProviderFinanceError(400, 'Provider id is required');
 }
 
 async function loadContext(items: LeanItem[]) {
@@ -542,7 +524,7 @@ async function payoutRequests(providerId: string): Promise<PayoutRequestDoc[]> {
 
 function committedPayoutTotal(requests: PayoutRequestDoc[]): number {
   return requests.reduce((sum, request) => {
-    return ['PENDING', 'SCHEDULED', 'PAID'].includes((request.status ?? '').toUpperCase())
+    return ['PENDING', 'SCHEDULED'].includes((request.status ?? '').toUpperCase())
       ? sum + request.amount
       : sum;
   }, 0);
@@ -569,7 +551,8 @@ export async function getProviderFinance(input: {
   const servicesProvided = earnedItems.reduce((sum, item) => sum + amountOf(item), 0);
   const serviceFees = earnedItems.reduce((sum, item) => sum + commissionOf(item), 0);
   const totalLifetimeEarnings = paidOutItems.reduce((sum, item) => sum + netAmountOf(item), 0);
-  const availableForPayout = heldItems.reduce((sum, item) => sum + netAmountOf(item), 0);
+  const heldBalance = heldItems.reduce((sum, item) => sum + netAmountOf(item), 0);
+  const availableForPayout = Math.max(heldBalance - committedPayoutTotal(requests), 0);
   const history = buildHistory(items, period);
   const context = await loadContext(items.slice(0, 100));
   const allTransactions = items.map((item) => toTransaction(item, context));

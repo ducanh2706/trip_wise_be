@@ -5,13 +5,14 @@ import {
   updatePricingRules,
   InventoryError,
 } from '@/services/inventory.service';
+import { ProviderAccessError, resolveProviderIdForUser } from '@/services/providerAccess.service';
 
-function handleInventoryError(
-  err: unknown,
-  res: Response,
-  next: NextFunction,
-): void {
+function handleInventoryError(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof InventoryError) {
+    res.status(err.status).json({ message: err.message });
+    return;
+  }
+  if (err instanceof ProviderAccessError) {
     res.status(err.status).json({ message: err.message });
     return;
   }
@@ -24,9 +25,9 @@ export async function getInventoryHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const month =
-      typeof req.query.month === 'string' ? req.query.month : undefined;
-    const overview = await getInventoryOverview(month);
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    const month = typeof req.query.month === 'string' ? req.query.month : undefined;
+    const overview = await getInventoryOverview(providerId, month);
     if (!overview) {
       res.status(404).json({ message: 'No listings for this provider' });
       return;
@@ -43,8 +44,9 @@ export async function updateDayHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const { date, available, price } = req.body ?? {};
-    res.json(await updateInventoryDay({ date, available, price }));
+    res.json(await updateInventoryDay({ providerId, date, available, price }));
   } catch (err) {
     handleInventoryError(err, res, next);
   }
@@ -56,9 +58,10 @@ export async function updateRulesHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const body = req.body ?? {};
     const month = typeof body.month === 'string' ? body.month : undefined;
-    res.json(await updatePricingRules(body, month));
+    res.json(await updatePricingRules(providerId, body, month));
   } catch (err) {
     handleInventoryError(err, res, next);
   }

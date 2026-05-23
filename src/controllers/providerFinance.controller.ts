@@ -4,6 +4,7 @@ import {
   listProviderPayoutRequests,
   requestProviderPayout,
 } from '@/services/providerFinance.service';
+import { ProviderAccessError, resolveProviderIdForUser } from '@/services/providerAccess.service';
 
 function firstString(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
@@ -24,8 +25,9 @@ export async function getProviderFinanceHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const data = await getProviderFinance({
-      providerId: firstString(req.query.providerId),
+      providerId,
       period: firstString(req.query.period),
       query: firstString(req.query.query) ?? firstString(req.query.q),
       status: firstString(req.query.status),
@@ -33,6 +35,10 @@ export async function getProviderFinanceHandler(
     });
     res.json(data);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
@@ -43,11 +49,16 @@ export async function listProviderPayoutRequestsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const data = await listProviderPayoutRequests({
-      providerId: firstString(req.query.providerId),
+      providerId,
     });
     res.json(data);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
@@ -58,13 +69,18 @@ export async function requestProviderPayoutHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const data = await requestProviderPayout({
-      providerId: firstString(req.body?.providerId) ?? firstString(req.query.providerId),
+      providerId,
       amount:
         typeof req.body?.amount === 'number' ? req.body.amount : numberParam(req.query.amount),
     });
     res.status(201).json(data);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }

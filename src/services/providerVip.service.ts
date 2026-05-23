@@ -6,6 +6,7 @@ import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
 import { WalletTx } from '@/models/WalletTransaction.model';
 import { createNotification } from '@/services/notifications.service';
+import { resolveProviderForUser } from '@/services/providerAccess.service';
 
 export interface ProviderVipResponse {
   hero: {
@@ -79,13 +80,6 @@ const PROMOTIONS = [
   },
 ];
 
-async function resolveProviderId(userId: string): Promise<string | undefined> {
-  const provider = await Provider.findOne({
-    $or: [{ _id: userId }, { user_id: userId }],
-  }).lean();
-  return provider?._id;
-}
-
 async function ensureProvider(userId: string) {
   const existing = await Provider.findOne({
     $or: [{ _id: userId }, { user_id: userId }],
@@ -105,9 +99,9 @@ async function ensureProvider(userId: string) {
 }
 
 export async function getProviderVip(userId: string): Promise<ProviderVipResponse> {
-  const providerId = await resolveProviderId(userId);
-  const providerFilter = providerId ? { provider_id: providerId } : {};
-  const provider = providerId ? await Provider.findById(providerId).lean() : null;
+  const provider = await resolveProviderForUser(userId);
+  const providerId = provider._id;
+  const providerFilter = { provider_id: providerId };
   const isElite = String(provider?.status ?? '').toUpperCase() === 'ELITE';
   const selectedPromotionIds = new Set(
     (

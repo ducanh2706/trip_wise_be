@@ -5,6 +5,7 @@ import {
   updateOrderStatus,
   type OrderStatus,
 } from '@/services/orders.service';
+import { ProviderAccessError, resolveProviderIdForUser } from '@/services/providerAccess.service';
 
 const writableStatuses = new Set<OrderStatus>(['pending', 'confirmed', 'completed', 'cancelled']);
 
@@ -19,16 +20,17 @@ export async function getProviderOrdersHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const providerId =
-      typeof req.query.providerId === 'string' && req.query.providerId.trim()
-        ? req.query.providerId.trim()
-        : undefined;
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const sort = typeof req.query.sort === 'string' ? req.query.sort : undefined;
 
     const data = await getProviderOrders({ providerId, status, sort });
     res.json(data);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
@@ -51,7 +53,8 @@ export async function updateOrderStatusHandler(
       return;
     }
 
-    const order = await updateOrderStatus(id, parsedStatus);
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    const order = await updateOrderStatus(id, parsedStatus, providerId);
     if (!order) {
       res.status(404).json({ message: 'Order not found' });
       return;
@@ -59,6 +62,10 @@ export async function updateOrderStatusHandler(
 
     res.json(order);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
@@ -75,7 +82,8 @@ export async function acceptOrderHandler(
       return;
     }
 
-    const order = await updateOrderStatus(id, 'confirmed');
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    const order = await updateOrderStatus(id, 'confirmed', providerId);
     if (!order) {
       res.status(404).json({ message: 'Order not found' });
       return;
@@ -83,6 +91,10 @@ export async function acceptOrderHandler(
 
     res.json(order);
   } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }

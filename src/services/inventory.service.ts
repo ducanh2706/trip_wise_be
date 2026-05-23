@@ -2,7 +2,6 @@ import { Hotel } from '@/models/Hotel.model';
 import { Room } from '@/models/Room.model';
 import { RoomInventory } from '@/models/RoomInventory.model';
 import { PricingRule } from '@/models/PricingRule.model';
-import { env } from '@/config/env';
 
 // Vietnam public holidays (only the data window 2026-05..07 is exercised, but
 // the full year is listed so Holiday Peak is meaningful year-round). Adjust
@@ -186,18 +185,13 @@ function effectivePrice(
   if (r.holiday_enabled && HOLIDAYS.has(dateStr)) {
     p *= 1 + r.holiday_peak_pct / 100;
   }
-  if (
-    r.last_minute_enabled &&
-    dateStr >= todayStr &&
-    dateStr <= lastEndStr
-  ) {
+  if (r.last_minute_enabled && dateStr >= todayStr && dateStr <= lastEndStr) {
     p *= 1 + r.last_minute_disc_pct / 100;
   }
   return Math.round(p);
 }
 
-async function resolveActiveRoom() {
-  const providerId = env.demoProviderId;
+async function resolveActiveRoom(providerId: string) {
   const hotels = await Hotel.find({
     provider_id: providerId,
     deleted_at: null,
@@ -216,11 +210,12 @@ async function resolveActiveRoom() {
 }
 
 export async function getInventoryOverview(
+  providerId: string,
   monthParam?: string,
 ): Promise<InventoryOverviewResponse | null> {
-  const ctx = await resolveActiveRoom();
+  const ctx = await resolveActiveRoom(providerId);
   if (!ctx) return null;
-  const { providerId, room, hotelName } = ctx;
+  const { room, hotelName } = ctx;
 
   const basePrice = room.base_price ?? 0;
   const { year, monthIdx } = resolveMonth(monthParam);
@@ -272,8 +267,7 @@ export async function getInventoryOverview(
   }
 
   const openDays = days.filter((x) => x.status !== 'closed');
-  const occupancyPct =
-    daysInMonth > 0 ? Math.round((openDays.length / daysInMonth) * 100) : 0;
+  const occupancyPct = daysInMonth > 0 ? Math.round((openDays.length / daysInMonth) * 100) : 0;
   const revenueForecast = openDays.reduce((sum, x) => sum + x.price, 0);
   const avgQty =
     openDays.length > 0
@@ -306,6 +300,7 @@ export async function getInventoryOverview(
 }
 
 export async function updateInventoryDay(input: {
+  providerId: string;
   date?: unknown;
   available?: unknown;
   price?: unknown;
@@ -316,11 +311,7 @@ export async function updateInventoryDay(input: {
   }
   const [yy, mm, dd] = date.split('-').map(Number);
   const probe = new Date(yy, mm - 1, dd);
-  if (
-    probe.getFullYear() !== yy ||
-    probe.getMonth() !== mm - 1 ||
-    probe.getDate() !== dd
-  ) {
+  if (probe.getFullYear() !== yy || probe.getMonth() !== mm - 1 || probe.getDate() !== dd) {
     throw new InventoryError(400, 'Date is not a real calendar day');
   }
   if (typeof input.available !== 'boolean') {
@@ -331,7 +322,7 @@ export async function updateInventoryDay(input: {
     throw new InventoryError(400, 'price must be a positive number');
   }
 
-  const ctx = await resolveActiveRoom();
+  const ctx = await resolveActiveRoom(input.providerId);
   if (!ctx) throw new InventoryError(404, 'No listings for this provider');
   const { room } = ctx;
 
@@ -339,10 +330,7 @@ export async function updateInventoryDay(input: {
     room_id: room._id,
     date,
   });
-  const defaultQty =
-    typeof room.capacity === 'number' && room.capacity > 0
-      ? room.capacity
-      : 10;
+  const defaultQty = typeof room.capacity === 'number' && room.capacity > 0 ? room.capacity : 10;
   const qty = !input.available
     ? 0
     : existing && (existing.available_qty ?? 0) > 0
@@ -357,10 +345,7 @@ export async function updateInventoryDay(input: {
     existing.updated_at = now;
     await existing.save();
   } else {
-    const top = await RoomInventory.findOne()
-      .sort({ _id: -1 })
-      .select('_id')
-      .lean();
+    const top = await RoomInventory.findOne().sort({ _id: -1 }).select('_id').lean();
     const nextId = (top?._id ?? 0) + 1;
     await RoomInventory.create({
       _id: nextId,
@@ -373,10 +358,11 @@ export async function updateInventoryDay(input: {
     });
   }
 
-  return (await getInventoryOverview(date.slice(0, 7)))!;
+  return (await getInventoryOverview(input.providerId, date.slice(0, 7)))!;
 }
 
 export async function updatePricingRules(
+  providerId: string,
   input: {
     weekendSurgePct?: unknown;
     holidayPeakPct?: unknown;
@@ -388,7 +374,6 @@ export async function updatePricingRules(
   },
   month?: string,
 ): Promise<InventoryOverviewResponse> {
-  const providerId = env.demoProviderId;
   const doc = await ensurePricingRules(providerId);
 
   const pct = (v: unknown, name: string): number => {
@@ -433,9 +418,6 @@ export async function updatePricingRules(
   doc.updated_at = new Date().toISOString();
   await doc.save();
 
-  const m =
-    typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
-      ? month
-      : undefined;
-  return (await getInventoryOverview(m))!;
+  const m = typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? month : undefined;
+  return (await getInventoryOverview(providerId, m))!;
 }

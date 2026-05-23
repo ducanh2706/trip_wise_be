@@ -456,11 +456,12 @@ export async function getProviderOrderCounts(
 export async function updateOrderStatus(
   id: string,
   status: OrderStatus,
+  providerId?: string,
 ): Promise<ProviderOrderItem | null> {
   const now = new Date().toISOString();
   const dbStatus = dbStatusesByOrderStatus[status][0];
-  const updated = await BookingItem.findByIdAndUpdate(
-    id,
+  const updated = await BookingItem.findOneAndUpdate(
+    { _id: id, ...(providerId ? { provider_id: providerId } : {}) },
     { item_status: dbStatus, updated_at: now },
     { returnDocument: 'after' },
   ).lean();

@@ -1,9 +1,9 @@
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { PayoutRequest } from '@/models/PayoutRequest.model';
-import { Provider } from '@/models/Provider.model';
 import { User } from '@/models/User.model';
 import { getProviderOrderCounts } from '@/services/orders.service';
+import { resolveProviderForUser } from '@/services/providerAccess.service';
 
 type ActivityType = 'booking' | 'listing' | 'review' | 'payout' | 'system';
 type RecentActivity = ProviderDashboardResponse['recentActivities'][number];
@@ -129,31 +129,15 @@ function listingActivityTitle(input: {
   return 'Listing updated';
 }
 
-async function resolveProviderId(userId: string): Promise<string | undefined> {
-  const provider = await Provider.findOne({
-    $or: [{ _id: userId }, { user_id: userId }],
-  }).lean();
-
-  if (!provider?._id) return undefined;
-
-  const hasProviderData = await Promise.all([
-    BookingItem.exists({ provider_id: provider._id }),
-    Hotel.exists({ provider_id: provider._id, deleted_at: null }),
-    PayoutRequest.exists({ provider_id: provider._id }),
-  ]);
-
-  return hasProviderData.some(Boolean) ? provider._id : undefined;
-}
-
 export async function getProviderDashboard(userId: string): Promise<ProviderDashboardResponse> {
-  const providerId = await resolveProviderId(userId);
-  const providerFilter = providerId ? { provider_id: providerId } : {};
-  const greetingUserId = providerId ?? userId;
+  const provider = await resolveProviderForUser(userId);
+  const providerId = provider._id;
+  const providerFilter = { provider_id: providerId };
   const [items, payouts, listings, user, counts] = await Promise.all([
     BookingItem.find(providerFilter).sort({ updated_at: -1, created_at: -1, _id: -1 }).lean(),
     PayoutRequest.find(providerFilter).sort({ requested_at: -1, _id: -1 }).lean(),
     Hotel.find(providerFilter).sort({ updated_at: -1, created_at: -1, _id: -1 }).limit(8).lean(),
-    User.findById(greetingUserId).lean(),
+    User.findById(provider.user_id || userId).lean(),
     getProviderOrderCounts(providerId),
   ]);
 
