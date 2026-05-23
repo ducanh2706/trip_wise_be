@@ -97,12 +97,12 @@ const MIME_TO_EXT: Record<string, string> = {
 };
 
 function listStatus(raw: unknown): ListingStatus {
-  if (typeof raw !== 'string') return 'active';
+  if (typeof raw !== 'string') return 'pending';
   const value = raw.trim().toLowerCase();
   if (value === 'inactive') return 'inactive';
   if (value === 'pending' || value === 'pending_review') return 'pending';
-  if (value === 'live') return 'active';
-  return 'active';
+  if (value === 'active' || value === 'live' || value === 'approved') return 'active';
+  return 'pending';
 }
 
 function statusLabel(status: ListingStatus): string {
@@ -447,7 +447,7 @@ export async function createProviderListing(
   const category = textValue(input.category, 'Hotel');
   const address = textValue(input.location ?? input.address, 'Tripwise destination');
   const description = textValue(input.description, '');
-  const status = listStatus(input.status);
+  const status: ListingStatus = 'pending';
   const price = Math.max(1, Math.round(numberValue(input.pricePerNight ?? input.price, 200)));
   const roomsCount = Math.max(1, Math.round(numberValue(input.roomsCount, 1)));
   const maxGuests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
@@ -468,7 +468,7 @@ export async function createProviderListing(
     name: title,
     address,
     star_rating: 4.6,
-    status: status === 'active' ? 'LIVE' : status === 'pending' ? 'PENDING' : 'INACTIVE',
+    status: 'PENDING',
     listing_status: status,
     listing_category: category,
     image: imageUrl,
@@ -522,8 +522,12 @@ export async function updateProviderListing(
   if (input.category !== undefined) updates.listing_category = textValue(input.category, 'Hotel');
   if (input.status !== undefined) {
     const status = listStatus(input.status);
-    updates.listing_status = status;
-    updates.status = status === 'active' ? 'LIVE' : status === 'pending' ? 'PENDING' : 'INACTIVE';
+    const nextStatus = status === 'inactive' ? 'inactive' : 'pending';
+    updates.listing_status = nextStatus;
+    updates.status = nextStatus === 'inactive' ? 'INACTIVE' : 'PENDING';
+    updates.reviewed_at = null;
+    updates.reviewed_by = null;
+    updates.rejection_reason = null;
   }
   if (input.amenities !== undefined && Array.isArray(input.amenities)) {
     updates.amenities = input.amenities.filter(

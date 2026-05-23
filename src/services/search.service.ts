@@ -19,7 +19,15 @@ type SearchCategory = 'all' | 'hotels' | 'flights' | 'tours' | 'train';
 
 type LeanHotel = Pick<
   HotelDoc,
-  '_id' | 'location_id' | 'name' | 'address' | 'star_rating' | 'image' | 'images'
+  | '_id'
+  | 'location_id'
+  | 'name'
+  | 'address'
+  | 'star_rating'
+  | 'image'
+  | 'images'
+  | 'status'
+  | 'listing_status'
 >;
 
 type LeanLocation = Pick<LocationDoc, '_id' | 'name' | 'parent_id' | 'type'>;
@@ -319,7 +327,11 @@ export async function getSearchData(input: {
 
   const [hotels, flights, tours, airportMap] = await Promise.all([
     shouldLoadHotels
-      ? Hotel.find({ deleted_at: null })
+      ? Hotel.find({
+          deleted_at: null,
+          status: 'LIVE',
+          listing_status: { $in: ['active', 'ACTIVE', 'live', 'LIVE', null] },
+        })
           .select({
             _id: 1,
             location_id: 1,
@@ -328,9 +340,11 @@ export async function getSearchData(input: {
             star_rating: 1,
             image: 1,
             images: 1,
+            status: 1,
+            listing_status: 1,
           })
           .sort({ star_rating: -1, _id: 1 })
-          .limit(SEARCH_SOURCE_LIMIT)
+          .limit(query ? SEARCH_SOURCE_LIMIT * 10 : SEARCH_SOURCE_LIMIT)
           .lean()
       : Promise.resolve([]),
     shouldLoadFlights

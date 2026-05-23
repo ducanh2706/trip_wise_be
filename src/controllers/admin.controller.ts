@@ -10,13 +10,53 @@ import {
   listProviderApplications,
   reviewProviderApplication,
 } from '@/services/providerApplications.service';
+import {
+  AdminListingError,
+  listAdminListings,
+  reviewAdminListing,
+} from '@/services/adminListings.service';
 
 function handleAdminError(error: unknown, res: Response, next: NextFunction): void {
-  if (error instanceof ProviderApplicationError || error instanceof AdminPayoutError) {
+  if (
+    error instanceof ProviderApplicationError ||
+    error instanceof AdminPayoutError ||
+    error instanceof AdminListingError
+  ) {
     res.status(error.status).json({ message: error.message });
     return;
   }
   next(error);
+}
+
+export async function listAdminListingsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(await listAdminListings(req.query.status));
+  } catch (error) {
+    handleAdminError(error, res, next);
+  }
+}
+
+export async function reviewAdminListingHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(
+      await reviewAdminListing({
+        actorId: req.auth!.userId,
+        listingId: req.params.listingId,
+        decision: req.body?.decision,
+        reason: req.body?.reason,
+      }),
+    );
+  } catch (error) {
+    handleAdminError(error, res, next);
+  }
 }
 
 function firstString(value: unknown): string {
