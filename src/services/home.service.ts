@@ -20,7 +20,7 @@ const TRENDING_LIMIT = 6;
 const MAX_LOCATION_DEPTH = 6;
 const DEFAULT_RECOMMENDED_CARD_HEIGHTS = [240, 180, 180, 240];
 const DEFAULT_OFFER_CTA_LABELS = ['BOOK NOW', 'VIEW STAY'];
-const DEFAULT_OFFER_ACCENT_TONES = ['primary', 'secondary'];
+const DEFAULT_OFFER_ACCENT_TONES = ['primary', 'primary'];
 const DEFAULT_HOME_SEARCH_ROUTE = '/add_location_search?category=all';
 const LOCATION_TYPE_PRIORITY = [
   'city',
@@ -174,8 +174,8 @@ function buildDefaultHomeContent(): HomeContentDoc {
         icon: 'flight_rounded',
         label: 'FLIGHTS',
         route: '/add_location_search?category=flights',
-        backgroundTone: 'secondary_soft',
-        iconTone: 'secondary',
+        backgroundTone: 'primary_soft',
+        iconTone: 'primary',
       },
       {
         key: 'tours',
