@@ -25,8 +25,7 @@ export async function updateProfileAvatarHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
-    res.json(await updateProfileAvatar(req.auth!.userId, req.body, publicBaseUrl));
+    res.json(await updateProfileAvatar(req.auth!.userId, req.body));
   } catch (error) {
     if (error instanceof ProfileError) {
       res.status(error.status).json({ message: error.message });
@@ -42,13 +41,11 @@ export async function updateProfileVerificationDocumentHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     res.json(
       await updateProfileVerificationDocument(
         req.auth!.userId,
         req.params.documentType,
         req.body,
-        publicBaseUrl,
       ),
     );
   } catch (error) {

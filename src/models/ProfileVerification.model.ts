@@ -1,7 +1,7 @@
 import { InferSchemaType, Schema, model } from 'mongoose';
 
-// One doc per user (`_id` IS user_id) so the profile screen can render
-// verification status without wiring file upload storage yet.
+// One doc per user (`_id` IS user_id). Document image fields store either
+// hosted URLs or data URLs so profile screens can read everything from DB.
 const profileVerificationSchema = new Schema(
   {
     _id: { type: String, required: true }, // = user_id

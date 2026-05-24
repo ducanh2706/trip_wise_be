@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { ProfileVerification } from '@/models/ProfileVerification.model';
 import { Provider } from '@/models/Provider.model';
 import { Trip } from '@/models/Trip.model';
@@ -51,8 +49,6 @@ export class ProfileError extends Error {
   }
 }
 
-const AVATAR_DIR = path.resolve(process.cwd(), 'uploads/avatars');
-const VERIFICATION_DIR = path.resolve(process.cwd(), 'uploads/verifications');
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024;
 const MAX_VERIFICATION_BYTES = 5 * 1024 * 1024;
 const MIME_TO_EXT: Record<string, string> = {
@@ -248,7 +244,6 @@ function normalizeVerificationDocumentType(value: unknown): VerificationDocument
 export async function updateProfileAvatar(
   userId: string,
   body: unknown,
-  publicBaseUrl: string,
 ): Promise<UpdateAvatarResponse> {
   const input = (body ?? {}) as Record<string, unknown>;
   const upload = readImageUpload(input, MAX_AVATAR_BYTES, 'Avatar');
@@ -270,23 +265,12 @@ export async function updateProfileVerificationDocument(
   userId: string,
   rawDocumentType: unknown,
   body: unknown,
-  publicBaseUrl: string,
 ): Promise<UpdateVerificationDocumentResponse> {
   const documentType = normalizeVerificationDocumentType(rawDocumentType);
   const config = VERIFICATION_DOCUMENTS[documentType];
   const input = (body ?? {}) as Record<string, unknown>;
   const upload = readImageUpload(input, MAX_VERIFICATION_BYTES, 'Verification document');
-
-  const now = Date.now();
-  const fileName = `${userId}-${documentType}-${now}-${upload.originalName}.${upload.ext}`;
-  const diskDir = path.join(VERIFICATION_DIR, documentType);
-  const diskPath = path.join(diskDir, fileName);
-  const imagePath = `/uploads/verifications/${documentType}/${fileName}`;
-
-  await mkdir(diskDir, { recursive: true });
-  await writeFile(diskPath, upload.buffer);
-
-  const imageUrl = `${publicBaseUrl}${imagePath}`;
+  const imageUrl = `data:${upload.mimeType};base64,${upload.buffer.toString('base64')}`;
   const updatedAt = new Date().toISOString();
   const updates: Record<string, unknown> = {
     [config.uploadedField]: true,
