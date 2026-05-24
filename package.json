@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node -r tsconfig-paths/register dist/index.js",
     "seed:rich": "node scripts/enrich-demo-data.js",
+    "migrate:usd": "node scripts/migrate-vnd-to-usd.js",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.{ts,json}\"",

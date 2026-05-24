@@ -1,4 +1,4 @@
-import { Activity, type ActivityDoc } from '@/models/Activity.model';
+﻿import { Activity, type ActivityDoc } from '@/models/Activity.model';
 import { Airport, type AirportDoc } from '@/models/Airport.model';
 import { Booking, type BookingDoc } from '@/models/Booking.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
@@ -145,7 +145,7 @@ function formatCurrency(value: number, currency: string): string {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
-      maximumFractionDigits: currency === 'VND' ? 0 : 2,
+      maximumFractionDigits: currency === 'USD' ? 2 : 0,
     }).format(value);
   } catch {
     return `${value.toLocaleString('en-US')} ${currency}`;
@@ -348,9 +348,9 @@ function toOrderItem(
     nights: diffNights(item.start_date ?? undefined, item.end_date ?? undefined),
     guests: item.quantity ?? null,
     totalPrice,
-    currency: 'VND',
-    displayPrice: formatCurrency(totalPrice, 'VND'),
-    bookingType: totalPrice >= 5_000_000 ? 'premium' : 'standard',
+    currency: 'USD',
+    displayPrice: formatCurrency(totalPrice, 'USD'),
+    bookingType: totalPrice >= 200 ? 'premium' : 'standard',
     imageUrl: pickFirstImage([
       room?.image,
       ...(hotel?.images ?? []),

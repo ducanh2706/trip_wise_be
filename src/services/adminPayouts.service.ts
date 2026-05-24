@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+﻿import { randomUUID } from 'crypto';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
 import { PayoutRequest, type PayoutRequestDoc } from '@/models/PayoutRequest.model';
@@ -123,8 +123,8 @@ function periodRange(period: PayoutPeriod, anchor = new Date()) {
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'VND',
-    maximumFractionDigits: 0,
+    currency: 'USD',
+    maximumFractionDigits: 2,
   }).format(Math.round(value));
 }
 
@@ -317,7 +317,7 @@ export async function payProviderForPeriod(input: {
     gross_amount: summary.grossAmount,
     commission_amount: summary.commissionAmount,
     commission_rate: PLATFORM_COMMISSION_RATE,
-    currency: 'VND',
+    currency: 'USD',
     status: 'PAID',
     requested_at: paidAt,
     scheduled_for: paidAt,
@@ -370,7 +370,7 @@ export async function createTestEscrowForProvider(input: {
   amount: unknown;
 }): Promise<AdminTestEscrowResponse> {
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
-  const amount = Math.round(Number(input.amount ?? 100000));
+  const amount = Math.round(Number(input.amount ?? 100));
   if (!email.includes('@')) throw new AdminPayoutError(400, 'Provider email is required');
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new AdminPayoutError(400, 'Amount must be greater than zero');
@@ -416,7 +416,7 @@ export async function createTestEscrowForProvider(input: {
     total_amount: amount,
     discount_amount: 0,
     final_amount: amount,
-    currency: 'VND',
+    currency: 'USD',
     status: 'PENDING',
     created_at: now,
     updated_at: now,

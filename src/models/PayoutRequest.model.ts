@@ -1,11 +1,11 @@
-import { InferSchemaType, Schema, model } from 'mongoose';
+﻿import { InferSchemaType, Schema, model } from 'mongoose';
 
 const payoutRequestSchema = new Schema(
   {
     _id: { type: String, required: true },
     provider_id: { type: String, required: true },
     amount: { type: Number, required: true },
-    currency: { type: String, default: 'VND' },
+    currency: { type: String, default: 'USD' },
     status: { type: String, default: 'PENDING' },
     requested_at: { type: String },
     scheduled_for: { type: String },

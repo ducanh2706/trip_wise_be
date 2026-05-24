@@ -54,6 +54,7 @@ export async function completeCheckoutHandler(
         endDate: body.endDate,
         guests: body.guests,
         paymentMethod: body.paymentMethod,
+        usePoints: body.usePoints,
         agreeToTerms: body.agreeToTerms,
       }),
     );

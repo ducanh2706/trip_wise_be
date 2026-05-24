@@ -15,12 +15,18 @@ import {
   listAdminListings,
   reviewAdminListing,
 } from '@/services/adminListings.service';
+import {
+  AdminCancellationError,
+  listAdminCancellationRequests,
+  reviewCancellationRequest,
+} from '@/services/adminCancellations.service';
 
 function handleAdminError(error: unknown, res: Response, next: NextFunction): void {
   if (
     error instanceof ProviderApplicationError ||
     error instanceof AdminPayoutError ||
-    error instanceof AdminListingError
+    error instanceof AdminListingError ||
+    error instanceof AdminCancellationError
   ) {
     res.status(error.status).json({ message: error.message });
     return;
@@ -130,7 +136,37 @@ export async function createTestEscrowForProviderHandler(
     res.status(201).json(
       await createTestEscrowForProvider({
         email: req.body?.email ?? 'thang3@gmail.com',
-        amount: req.body?.amount ?? 100000,
+        amount: req.body?.amount ?? 100,
+      }),
+    );
+  } catch (error) {
+    handleAdminError(error, res, next);
+  }
+}
+
+export async function listAdminCancellationRequestsHandler(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(await listAdminCancellationRequests());
+  } catch (error) {
+    handleAdminError(error, res, next);
+  }
+}
+
+export async function reviewCancellationRequestHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(
+      await reviewCancellationRequest({
+        actorId: req.auth!.userId,
+        bookingItemId: firstString(req.params.bookingItemId),
+        decision: req.body?.decision,
       }),
     );
   } catch (error) {

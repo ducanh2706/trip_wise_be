@@ -1,4 +1,4 @@
-import { BookingItem } from '@/models/BookingItem.model';
+﻿import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { PayoutRequest } from '@/models/PayoutRequest.model';
 import { User } from '@/models/User.model';
@@ -49,11 +49,11 @@ function formatVnd(value: number): string {
   try {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'VND',
-      maximumFractionDigits: 0,
+      currency: 'USD',
+      maximumFractionDigits: 2,
     }).format(Math.round(value));
   } catch {
-    return `${Math.round(value).toLocaleString('en-US')} VND`;
+    return `$${Math.round(value).toLocaleString('en-US')}`;
   }
 }
 

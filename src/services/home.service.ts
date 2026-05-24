@@ -1,4 +1,4 @@
-import { Hotel, type HotelDoc } from '@/models/Hotel.model';
+﻿import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import {
   HomeContent,
   type HomeCategoryDoc,
@@ -49,7 +49,7 @@ interface BaseHomeHotel {
   locationLabel: string;
   priceFrom: number | null;
   priceLabel: string | null;
-  currency: 'VND';
+  currency: 'USD';
   rating: number;
   ratingLabel: string;
 }
@@ -249,7 +249,7 @@ function buildHotelRoute(hotelId: number): string {
 }
 
 function formatVndPrice(value: number): string {
-  return `VND ${priceFormatter.format(value)}`;
+  return `$${priceFormatter.format(value)}`;
 }
 
 function getPriceLabel(priceFrom: number | null): string | null {
@@ -734,7 +734,7 @@ export async function getHomeData(): Promise<HomeResponse> {
       locationLabel,
       priceFrom,
       priceLabel: getPriceLabel(priceFrom),
-      currency: 'VND',
+      currency: 'USD',
       rating: hotel.star_rating,
       ratingLabel: hotel.star_rating.toFixed(1),
       hasImage: imageUrl !== null,

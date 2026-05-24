@@ -1,4 +1,4 @@
-// Seed a `notifications` collection (in-app inbox) for the demo user — no
+// Seed a `notifications` collection (in-app inbox) for the demo user - no
 // notification data exists. Entries reference the demo user's REAL trips,
 // payments and trip companions so the feed is consistent with the rest of
 // the app. Full rebuild, deterministic, safe to re-run.
@@ -13,7 +13,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const mongoose = require('mongoose');
 const { randomUUID } = require('crypto');
 
-// Demo user — same one the wallet / trips slices pin; see src/config/env.ts.
+// Demo user - same one the wallet / trips slices pin; see src/config/env.ts.
 const DEMO_USER_ID = '337b6ec4-bd20-474c-9318-5898cfba516e';
 
 // The N most-recent notifications stay unread; everything older is read.
@@ -31,8 +31,7 @@ function rng(seed) {
 }
 const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
 
-const fmtVnd = (n) =>
-  '₫' + Math.round(n || 0).toLocaleString('en-US').replace(/,/g, '.');
+const fmtUsd = (n) => '$' + Math.round(n || 0).toLocaleString('en-US');
 
 (async () => {
   await mongoose.connect(process.env.MONGO_URI);
@@ -123,7 +122,7 @@ const fmtVnd = (n) =>
 
   // BOOKING — one per recent real payment.
   for (const p of payments) {
-    const amount = fmtVnd(p.amount);
+    const amount = fmtUsd(p.amount);
     const ref = p.booking_id ? `Booking ${p.booking_id}` : 'your booking';
     if ((p.status || '').toUpperCase() === 'PENDING') {
       add(
@@ -162,7 +161,7 @@ const fmtVnd = (n) =>
     );
   }
 
-  // PROMO — generic offers (not user-specific).
+  // PROMO - generic offers (not user-specific).
   add(
     'PROMO',
     'Flash deal: 25% off beach resorts',
@@ -171,14 +170,14 @@ const fmtVnd = (n) =>
   );
   add(
     'PROMO',
-    'Double loyalty points this week',
-    'Earn 2× points on every booking until Sunday. Treat yourself.',
+    'Points on completed bookings',
+    'Earn points equal to 1% of each completed booking.',
     '/wallet_loyalty',
   );
   add(
     'PROMO',
-    'You’re close to the next tier',
-    'A little more spending unlocks better perks. See your progress.',
+    'Use points at checkout',
+    'Apply points for up to 20% off your current booking.',
     '/wallet_loyalty',
   );
 

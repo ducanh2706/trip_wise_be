@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { Provider } from '@/models/Provider.model';
@@ -45,7 +45,7 @@ export interface ProviderVipResponse {
 
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80';
-const ELITE_UPGRADE_PRICE_VND = 2_499_000;
+const ELITE_UPGRADE_PRICE_USD = 100;
 
 const PROMOTIONS = [
   {
@@ -157,7 +157,7 @@ export async function getProviderVip(userId: string): Promise<ProviderVipRespons
           { value: 'Verified', label: 'Premium Badge' },
           { value: 'Priority', label: 'Search Placement' },
         ],
-        priceLabel: `₫${ELITE_UPGRADE_PRICE_VND.toLocaleString('en-US')}`,
+        priceLabel: `$${ELITE_UPGRADE_PRICE_USD.toLocaleString('en-US')}`,
         priceUnit: '/mo',
         ctaLabel: isElite ? 'CURRENT ELITE PLAN' : 'UPGRADE NOW',
         ctaRoute: isElite ? null : '/elite_upgrade_confirmation',
@@ -185,12 +185,12 @@ export async function upgradeProviderToElite(userId: string): Promise<ProviderVi
   if (!wallet) {
     throw new ProviderVipError(404, 'Wallet not found');
   }
-  if ((wallet.balance ?? 0) < ELITE_UPGRADE_PRICE_VND) {
+  if ((wallet.balance ?? 0) < ELITE_UPGRADE_PRICE_USD) {
     throw new ProviderVipError(400, 'Wallet has insufficient funds');
   }
 
   const now = new Date().toISOString();
-  wallet.balance = (wallet.balance ?? 0) - ELITE_UPGRADE_PRICE_VND;
+  wallet.balance = (wallet.balance ?? 0) - ELITE_UPGRADE_PRICE_USD;
   wallet.updated_at = now;
 
   await Provider.updateOne(
@@ -211,7 +211,7 @@ export async function upgradeProviderToElite(userId: string): Promise<ProviderVi
       _id: randomUUID(),
       user_id: userId,
       type: 'VIP_UPGRADE',
-      amount: ELITE_UPGRADE_PRICE_VND,
+      amount: ELITE_UPGRADE_PRICE_USD,
       card_id: 'wallet',
       card_last4: null,
       status: 'SUCCESS',
@@ -221,7 +221,7 @@ export async function upgradeProviderToElite(userId: string): Promise<ProviderVi
       userId,
       type: 'SYSTEM',
       title: 'Elite plan activated',
-      body: `₫${ELITE_UPGRADE_PRICE_VND.toLocaleString('en-US')} was charged from your wallet.`,
+      body: `$${ELITE_UPGRADE_PRICE_USD.toLocaleString('en-US')} was charged from your wallet.`,
       actionRoute: '/vip_services',
     }),
   ]);

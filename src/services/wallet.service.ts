@@ -1,4 +1,6 @@
-import { randomUUID } from 'crypto';
+﻿import { randomUUID } from 'crypto';
+import { Booking } from '@/models/Booking.model';
+import { BookingItem } from '@/models/BookingItem.model';
 import { Wallet } from '@/models/Wallet.model';
 import { Payment } from '@/models/Payment.model';
 import { User } from '@/models/User.model';
@@ -6,18 +8,11 @@ import { Card } from '@/models/Card.model';
 import { WalletTx } from '@/models/WalletTransaction.model';
 import { createNotification } from '@/services/notifications.service';
 
-// No loyalty-tier or points-rate data exists in the DB, so these are
-// server-side config for the slice. Adjust freely; not persisted anywhere.
-const POINT_VALUE_VND = 100;
-const TIERS = [
-  { name: 'SILVER', min: 0 },
-  { name: 'GOLD', min: 5000 },
-  { name: 'PLATINUM', min: 15000 },
-];
+const COMPLETED_POINT_RATE = 0.01;
+const COMPLETED_ITEM_STATUSES = ['COMPLETED', 'DONE'];
 
-// Every mock card is minted with this VND balance (≈ "30,000 USD" per the
-// product ask, kept in VND so there is no currency conversion anywhere).
-const CARD_SEED_BALANCE = 30_000_000;
+// Every mock card is minted with this USD balance for demo top-up/withdraw.
+const CARD_SEED_BALANCE = 1_200;
 
 // Max rows in the wallet screen's "Recent Transactions" preview. The full
 // history is reachable via "See all" (GET /wallet/transactions, paginated).
@@ -46,6 +41,9 @@ export interface WalletOverviewResponse {
   balance: number;
   currency: string;
   loyaltyPoints: number;
+  completedInvoiceVnd: number;
+  pointsRate: number;
+  pointsRateLabel: string;
   pointsValueVnd: number;
   tier: {
     current: string;
@@ -62,26 +60,6 @@ export interface TransactionPage {
   total: number;
   hasMore: boolean;
   nextOffset: number;
-}
-
-function deriveTier(points: number): WalletOverviewResponse['tier'] {
-  let idx = 0;
-  for (let i = 0; i < TIERS.length; i++) {
-    if (points >= TIERS[i].min) idx = i;
-  }
-  const current = TIERS[idx];
-  const next = TIERS[idx + 1] ?? null;
-  if (!next) {
-    return { current: current.name, next: null, pointsToNext: null, progress: 1 };
-  }
-  const span = next.min - current.min;
-  const into = points - current.min;
-  return {
-    current: current.name,
-    next: next.name,
-    pointsToNext: Math.max(next.min - points, 0),
-    progress: span > 0 ? Math.min(Math.max(into / span, 0), 1) : 1,
-  };
 }
 
 function formatDate(iso?: string | null): string {
@@ -185,8 +163,11 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
     const isProviderPayout = t.type === 'PROVIDER_PAYOUT';
     const isEscrowIn = t.type === 'BOOKING_ESCROW_IN';
     const isPayoutOut = t.type === 'PROVIDER_PAYOUT_OUT';
+    const isRefundIn = t.type === 'BOOKING_REFUND_IN';
+    const isRefundOut = t.type === 'BOOKING_REFUND_OUT';
+    const isPointRedeem = t.type === 'POINT_REDEEM';
     const date = formatDate(t.created_at);
-    const isPositive = isTopup || isProviderPayout || isEscrowIn;
+    const isPositive = isTopup || isProviderPayout || isEscrowIn || isRefundIn;
     const cardLabel = t.card_last4 ? `card •• ${t.card_last4}` : 'card';
     return {
       id: t._id,
@@ -198,11 +179,27 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
             ? 'Booking escrow received'
             : isPayoutOut
               ? 'Provider payout released'
-              : isVipUpgrade
-                ? 'VIP plan upgrade'
-                : 'Withdrawal',
+              : isRefundIn
+                ? 'Booking refund'
+                : isRefundOut
+                  ? 'Booking refund paid'
+                  : isPointRedeem
+                    ? 'Points used'
+                    : isVipUpgrade
+                      ? 'VIP plan upgrade'
+                      : 'Withdrawal',
       subtitle:
-        (isTopup ? `From ${cardLabel}` : isVipUpgrade ? 'Elite Provider plan' : `To ${cardLabel}`) +
+        (isTopup
+          ? `From ${cardLabel}`
+          : isRefundIn
+            ? 'Refund to wallet'
+            : isRefundOut
+              ? 'Refund from held wallet'
+              : isPointRedeem
+                ? 'Booking discount'
+                : isVipUpgrade
+                  ? 'Elite Provider plan'
+                  : `To ${cardLabel}`) +
         (date ? ` • ${date}` : ''),
       method: t.type,
       amountVnd: isPositive ? Math.abs(t.amount) : -Math.abs(t.amount),
@@ -216,6 +213,67 @@ async function buildLedger(userId: string): Promise<WalletTransaction[]> {
     .map(({ _ts, ...rest }) => rest);
 }
 
+export async function calculateCompletedPoints(userId: string): Promise<{
+  completedInvoiceVnd: number;
+  earnedPoints: number;
+  redeemedPoints: number;
+  points: number;
+}> {
+  const bookings = await Booking.find({ user_id: userId }).select({ _id: 1 }).lean();
+  const bookingIds = bookings.map((booking) => String(booking._id));
+  if (bookingIds.length === 0) {
+    const redeemedOnly = await redeemedPointsForUser(userId);
+    return {
+      completedInvoiceVnd: 0,
+      earnedPoints: 0,
+      redeemedPoints: redeemedOnly,
+      points: 0,
+    };
+  }
+
+  const [items, redeemedPoints] = await Promise.all([
+    BookingItem.find({
+      booking_id: { $in: bookingIds },
+      item_status: { $in: COMPLETED_ITEM_STATUSES },
+    })
+      .select({ total_price: 1, gross_amount: 1 })
+      .lean(),
+    redeemedPointsForUser(userId),
+  ]);
+
+  const completedInvoiceVnd = items.reduce((sum, item) => {
+    const amount =
+      typeof item.total_price === 'number' && Number.isFinite(item.total_price)
+        ? item.total_price
+        : typeof item.gross_amount === 'number' && Number.isFinite(item.gross_amount)
+          ? item.gross_amount
+          : 0;
+    return sum + Math.max(0, amount);
+  }, 0);
+
+  const earnedPoints = Math.round(completedInvoiceVnd * COMPLETED_POINT_RATE);
+
+  return {
+    completedInvoiceVnd: Math.round(completedInvoiceVnd),
+    earnedPoints,
+    redeemedPoints,
+    points: Math.max(earnedPoints - redeemedPoints, 0),
+  };
+}
+
+async function redeemedPointsForUser(userId: string): Promise<number> {
+  const rows = await WalletTx.find({
+    user_id: userId,
+    type: 'POINT_REDEEM',
+    status: 'SUCCESS',
+  })
+    .select({ amount: 1 })
+    .lean();
+  return Math.round(
+    rows.reduce((sum, row) => sum + Math.max(0, row.amount ?? 0), 0),
+  );
+}
+
 export async function getWalletOverview(userId: string): Promise<WalletOverviewResponse | null> {
   const wallet = await Wallet.findOne({ user_id: userId }).lean();
   if (!wallet) return null;
@@ -223,22 +281,37 @@ export async function getWalletOverview(userId: string): Promise<WalletOverviewR
   const user = await User.findById(userId).lean();
   await ensureDefaultCard(userId, user?.full_name);
 
-  const [cards, ledger] = await Promise.all([
+  const [cards, ledger, pointSummary] = await Promise.all([
     Card.find({ user_id: userId }).sort({ is_default: -1, created_at: 1 }).lean(),
     buildLedger(userId),
+    calculateCompletedPoints(userId),
   ]);
 
-  const points = wallet.loyalty_points ?? 0;
+  const points = pointSummary.points;
+  if ((wallet.loyalty_points ?? 0) !== points) {
+    await Wallet.updateOne(
+      { user_id: userId },
+      {
+        $set: {
+          loyalty_points: points,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    );
+  }
 
   return {
     user: user
       ? { id: user._id, name: user.full_name ?? 'Traveler', image: user.image ?? null }
       : null,
     balance: wallet.balance ?? 0,
-    currency: 'VND',
+    currency: 'USD',
     loyaltyPoints: points,
-    pointsValueVnd: points * POINT_VALUE_VND,
-    tier: deriveTier(points),
+    completedInvoiceVnd: pointSummary.completedInvoiceVnd,
+    pointsRate: COMPLETED_POINT_RATE,
+    pointsRateLabel: '1%',
+    pointsValueVnd: 0,
+    tier: { current: 'POINTS', next: null, pointsToNext: null, progress: 0 },
     cards: cards.map(mapCard),
     transactions: ledger.slice(0, RECENT_TX_PREVIEW),
   };
@@ -317,7 +390,7 @@ export async function topUp(
     userId,
     type: 'SYSTEM',
     title: 'Top-up successful',
-    body: `₫${amount.toLocaleString('en-US')} was added to your wallet.`,
+    body: `$${amount.toLocaleString('en-US')} was added to your wallet.`,
     actionRoute: '/wallet_loyalty',
   });
 
@@ -365,7 +438,7 @@ export async function withdraw(
     userId,
     type: 'SYSTEM',
     title: 'Withdrawal complete',
-    body: `₫${amount.toLocaleString('en-US')} was moved to your card ending ${card.last4}.`,
+    body: `$${amount.toLocaleString('en-US')} was moved to your card ending ${card.last4}.`,
     actionRoute: '/wallet_transactions',
   });
 

@@ -6,9 +6,11 @@ import { Payment } from '@/models/Payment.model';
 import { Room } from '@/models/Room.model';
 import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
+import { WalletTx } from '@/models/WalletTransaction.model';
 import { createNotification } from '@/services/notifications.service';
 import { env } from '@/config/env';
 import { calculateCommission, creditWallet, ensureWallet } from '@/services/walletLedger.service';
+import { calculateCompletedPoints } from '@/services/wallet.service';
 
 export class CheckoutError extends Error {
   constructor(
@@ -46,10 +48,14 @@ export interface CheckoutSummaryResponse {
     subtotal: number;
     taxes: number;
     fees: number;
+    pointsAvailable: number;
+    pointsMaxRedeem: number;
+    pointsMaxRedeemLabel: string;
     total: number;
     subtotalLabel: string;
     taxesLabel: string;
     feesLabel: string;
+    pointsAvailableLabel: string;
     totalLabel: string;
   };
   guestPrefill: {
@@ -234,6 +240,13 @@ function pricing(basePrice: number, nights: number) {
   };
 }
 
+function maxRedeemablePoints(total: number, availablePoints: number): number {
+  return Math.max(
+    0,
+    Math.min(Math.round(total * 0.2), Math.max(0, Math.round(availablePoints))),
+  );
+}
+
 export async function getCheckoutSummary(input: {
   userId: string;
   hotelId?: unknown;
@@ -242,14 +255,16 @@ export async function getCheckoutSummary(input: {
   endDate?: unknown;
   guests?: unknown;
 }): Promise<CheckoutSummaryResponse> {
-  const [listing, user, wallet] = await Promise.all([
+  const [listing, user, wallet, pointSummary] = await Promise.all([
     resolveListing(input.hotelId, input.roomId),
     User.findById(input.userId).lean(),
     Wallet.findOne({ user_id: input.userId }).lean(),
+    calculateCompletedPoints(input.userId),
   ]);
 
   const { startDate, endDate, nights, guests } = resolveBookingDetails(input);
   const bill = pricing(listing.basePrice, nights);
+  const pointsMaxRedeem = maxRedeemablePoints(bill.total, pointSummary.points);
 
   return {
     listing: {
@@ -266,6 +281,10 @@ export async function getCheckoutSummary(input: {
     pricing: {
       currency: 'USD',
       ...bill,
+      pointsAvailable: pointSummary.points,
+      pointsMaxRedeem,
+      pointsMaxRedeemLabel: formatCurrency(pointsMaxRedeem),
+      pointsAvailableLabel: `${pointSummary.points.toLocaleString('en-US')} points`,
     },
     guestPrefill: {
       fullName: user?.full_name?.trim() || 'Tripwise Traveler',
@@ -300,6 +319,7 @@ export async function completeCheckout(input: {
   endDate?: unknown;
   guests?: unknown;
   paymentMethod?: unknown;
+  usePoints?: unknown;
   agreeToTerms?: unknown;
 }): Promise<CheckoutCompleteResponse> {
   if (input.agreeToTerms !== true) {
@@ -313,8 +333,12 @@ export async function completeCheckout(input: {
   const paymentMethodDb =
     paymentMethod === 'wallet' ? 'WALLET' : paymentMethod === 'paypal' ? 'PAYPAL' : 'CREDIT_CARD';
   const bill = pricing(listing.basePrice, nights);
+  const pointSummary = await calculateCompletedPoints(input.userId);
+  const pointsDiscount =
+    input.usePoints === true ? maxRedeemablePoints(bill.total, pointSummary.points) : 0;
+  const amountDue = Math.max(bill.total - pointsDiscount, 0);
   const now = new Date().toISOString();
-  const settlement = calculateCommission(bill.total);
+  const settlement = calculateCommission(amountDue);
 
   const bookingId = randomUUID();
   const bookingItemId = randomUUID();
@@ -323,10 +347,10 @@ export async function completeCheckout(input: {
   if (paymentMethodDb === 'WALLET') {
     await ensureWallet(input.userId);
     const wallet = await Wallet.findOne({ user_id: input.userId });
-    if (!wallet || (wallet.balance ?? 0) < bill.total) {
+    if (!wallet || (wallet.balance ?? 0) < amountDue) {
       throw new CheckoutError(400, 'Wallet has insufficient funds');
     }
-    wallet.balance = (wallet.balance ?? 0) - bill.total;
+    wallet.balance = (wallet.balance ?? 0) - amountDue;
     wallet.updated_at = now;
     await wallet.save();
   }
@@ -337,8 +361,8 @@ export async function completeCheckout(input: {
       user_id: input.userId,
       total_price: bill.subtotal,
       total_amount: bill.subtotal + bill.taxes + bill.fees,
-      discount_amount: 0,
-      final_amount: bill.total,
+      discount_amount: pointsDiscount,
+      final_amount: amountDue,
       currency: 'USD',
       status: 'PENDING',
       created_at: now,
@@ -356,7 +380,7 @@ export async function completeCheckout(input: {
       end_date: endDate,
       quantity: guests,
       price_per_unit: listing.basePrice,
-      total_price: bill.total,
+      total_price: amountDue,
       gross_amount: settlement.grossAmount,
       commission_rate: env.platformCommissionRate,
       commission_amount: settlement.commissionAmount,
@@ -374,7 +398,7 @@ export async function completeCheckout(input: {
       booking_id: bookingId,
       user_id: input.userId,
       payment_method: paymentMethodDb,
-      amount: bill.total,
+      amount: amountDue,
       transaction_id: `TX-${Date.now()}`,
       status: 'SUCCESS',
       created_at: now,
@@ -382,9 +406,35 @@ export async function completeCheckout(input: {
     }),
   ]);
 
+  if (pointsDiscount > 0) {
+    await WalletTx.create({
+      _id: randomUUID(),
+      user_id: input.userId,
+      type: 'POINT_REDEEM',
+      amount: pointsDiscount,
+      card_id: 'points',
+      card_last4: null,
+      status: 'SUCCESS',
+      booking_id: bookingId,
+      booking_item_id: bookingItemId,
+      provider_id: listing.providerId,
+      note: 'Points discount applied to booking',
+      created_at: now,
+    });
+    await Wallet.updateOne(
+      { user_id: input.userId },
+      {
+        $set: {
+          loyalty_points: Math.max(pointSummary.points - pointsDiscount, 0),
+          updated_at: now,
+        },
+      },
+    );
+  }
+
   await creditWallet({
     userId: env.adminWalletUserId,
-    amount: bill.total,
+    amount: amountDue,
     type: 'BOOKING_ESCROW_IN',
     status: 'HELD',
     bookingId,

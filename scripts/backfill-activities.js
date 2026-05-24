@@ -32,11 +32,12 @@ function weightedRating(r) {
 
 const CATEGORIES = ['FOOD', 'SIGHTSEEING', 'TRANSPORT', 'OUTDOORS'];
 const KW = [
-  ['FOOD', /(ẩm thực|ăn|food|nhà hàng|gelato|cà phê|coffee|buffet|đặc sản)/i],
-  ['TRANSPORT', /(xe|đưa đón|transfer|shuttle|coach|tàu|phà|vé máy bay|sân bay|airport)/i],
-  ['OUTDOORS', /(trekking|leo núi|lặn|biển|beach|hike|hiking|surf|kayak|cắm trại|camping|thác|đảo|island|rừng)/i],
-  ['SIGHTSEEING', /(tham quan|bảo tàng|di tích|chùa|đền|tour|city|phố cổ|cung điện|lâu đài|museum)/i],
+  ['FOOD', /(food|restaurant|gelato|coffee|buffet|cuisine|dining|local dish)/i],
+  ['TRANSPORT', /(car|transfer|shuttle|coach|train|ferry|flight|airport)/i],
+  ['OUTDOORS', /(trekking|beach|hike|hiking|surf|kayak|camping|waterfall|island|forest)/i],
+  ['SIGHTSEEING', /(sightseeing|museum|landmark|temple|tour|city|old town|palace|castle)/i],
 ];
+
 function deriveCategory(title, id) {
   for (const [cat, re] of KW) if (re.test(title || '')) return cat;
   return CATEGORIES[id % CATEGORIES.length];
@@ -44,7 +45,7 @@ function deriveCategory(title, id) {
 
 const CAT_BLURB = {
   FOOD: 'A guided tasting experience celebrating authentic local flavours and family recipes.',
-  SIGHTSEEING: 'A curated walk through the area’s landmarks with stories from expert local guides.',
+  SIGHTSEEING: 'A curated walk through the area landmarks with stories from expert local guides.',
   TRANSPORT: 'Comfortable, stress-free transfers with reliable pickup and friendly drivers.',
   OUTDOORS: 'An active outdoor adventure with stunning scenery and small, well-led groups.',
 };
@@ -60,7 +61,7 @@ const CAT_BLURB = {
     const rating = weightedRating(r);
     const description =
       `${a.title}. ${CAT_BLURB[category]} ` +
-      `Highly rated by travellers (${rating.toFixed(1)}★) and easy to add to your trip.`;
+      `Highly rated by travellers (${rating.toFixed(1)} stars) and easy to add to your trip.`;
     const image = `https://picsum.photos/seed/activity_${a._id}/800/600`;
     const res = await col.updateOne(
       { _id: a._id },

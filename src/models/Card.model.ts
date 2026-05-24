@@ -1,7 +1,7 @@
-import { Schema, model, InferSchemaType } from 'mongoose';
+﻿import { Schema, model, InferSchemaType } from 'mongoose';
 
-// Mock payment card. Not real card data — every new card is seeded with a
-// fixed VND balance so top-up/withdraw can move "real-feeling" money.
+// Mock payment card. Not real card data - every new card is seeded with a
+// fixed USD balance so top-up/withdraw can move "real-feeling" money.
 const cardSchema = new Schema(
   {
     _id: { type: String, required: true },

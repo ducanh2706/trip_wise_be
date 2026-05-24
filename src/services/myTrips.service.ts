@@ -1,10 +1,9 @@
-import { Activity, type ActivityDoc } from '@/models/Activity.model';
+﻿import { Activity, type ActivityDoc } from '@/models/Activity.model';
 import { Airport, type AirportDoc } from '@/models/Airport.model';
 import { Booking, type BookingDoc } from '@/models/Booking.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
 import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
-import { Payment } from '@/models/Payment.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { createNotification } from '@/services/notifications.service';
 
@@ -29,6 +28,7 @@ export interface MyTripCard {
   subtitle: string;
   serviceType: ServiceType;
   status: UiTab;
+  rawStatus: string;
   statusLabel: string;
   dateLabel: string;
   amount: number;
@@ -36,6 +36,10 @@ export interface MyTripCard {
   imageUrl: string;
   route: string;
   ticketCode: string;
+  canCancel: boolean;
+  isCancellationPending: boolean;
+  cancelDeadline: string | null;
+  cancelDeadlineLabel: string | null;
 }
 
 export interface MyTripsResponse {
@@ -48,8 +52,10 @@ export interface MyTripsResponse {
 export interface CancelMyTripResponse {
   bookingId: string;
   bookingItemId: string;
-  status: 'CANCELLED';
+  status: 'CANCELLED' | 'CANCELLATION_PENDING';
   message: string;
+  cancelDeadline: string | null;
+  cancelDeadlineLabel: string | null;
 }
 
 export class MyTripsError extends Error {
@@ -71,6 +77,7 @@ const STATUS_ALIASES: Record<string, UiTab> = {
   PAID: 'upcoming',
   ACCEPTED: 'upcoming',
   APPROVED: 'upcoming',
+  CANCELLATION_PENDING: 'upcoming',
   COMPLETED: 'completed',
   DONE: 'completed',
   CANCELLED: 'cancelled',
@@ -78,6 +85,7 @@ const STATUS_ALIASES: Record<string, UiTab> = {
   REJECTED: 'cancelled',
 };
 const CANCELLED_ITEM_STATUSES = new Set(['CANCELLED', 'CANCELED', 'REJECTED']);
+const CANCELLATION_PENDING_STATUSES = new Set(['CANCELLATION_PENDING']);
 const CANCELLABLE_ITEM_STATUSES = new Set([
   'PENDING',
   'REQUESTED',
@@ -87,6 +95,9 @@ const CANCELLABLE_ITEM_STATUSES = new Set([
   'ACCEPTED',
   'APPROVED',
 ]);
+const SHORT_NOTICE_DAYS = 7;
+const SHORT_NOTICE_CANCEL_WINDOW_DAYS = 1;
+const STANDARD_CANCEL_WINDOW_DAYS = 7;
 
 function normalizeTab(value: unknown): UiTab {
   if (value === 'completed') return 'completed';
@@ -124,19 +135,19 @@ function formatDateRange(start?: string | null, end?: string | null): string {
   };
   const s = fmt(start);
   const e = fmt(end);
-  if (s && e) return `${s} — ${e}`;
+  if (s && e) return `${s} - ${e}`;
   return s ?? e ?? 'Dates to be confirmed';
 }
 
 function formatAmount(amount: number): string {
   try {
-    return new Intl.NumberFormat('vi-VN', {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'VND',
-      maximumFractionDigits: 0,
+      currency: 'USD',
+      maximumFractionDigits: 2,
     }).format(Math.round(amount));
   } catch {
-    return `${Math.round(amount).toLocaleString('en-US')} VND`;
+    return `$${Math.round(amount).toLocaleString('en-US')}`;
   }
 }
 
@@ -169,6 +180,59 @@ function statusLabel(tab: UiTab): string {
   if (tab === 'completed') return 'Completed';
   if (tab === 'cancelled') return 'Cancelled';
   return 'Upcoming';
+}
+
+function itemStatusLabel(rawStatus: string, tab: UiTab): string {
+  if (isCancellationPendingStatus(rawStatus)) return 'Cancellation pending';
+  return statusLabel(tab);
+}
+
+function parseDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const date = value.length <= 10 ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDays(date: Date, days: number): Date {
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function formatDeadline(value: string | null): string | null {
+  const date = parseDate(value);
+  if (!date) return null;
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function cancellationDeadline(item: LeanItem, booking?: LeanBooking): Date {
+  const bookedAt = parseDate(booking?.created_at) ?? parseDate(item.created_at) ?? new Date();
+  const startDate = parseDate(item.start_date);
+  const daysUntilStart =
+    startDate == null
+      ? Number.POSITIVE_INFINITY
+      : Math.ceil((startDate.getTime() - bookedAt.getTime()) / 86_400_000);
+  const windowDays =
+    daysUntilStart <= SHORT_NOTICE_DAYS
+      ? SHORT_NOTICE_CANCEL_WINDOW_DAYS
+      : STANDARD_CANCEL_WINDOW_DAYS;
+  return addDays(bookedAt, windowDays);
+}
+
+function cancellationPolicy(item: LeanItem, booking?: LeanBooking) {
+  const deadline = cancellationDeadline(item, booking);
+  const deadlineIso = deadline.toISOString();
+  const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status);
+  return {
+    deadlineIso,
+    deadlineLabel: formatDeadline(deadlineIso),
+    canCancel: isCancellableStatus(rawStatus) && Date.now() <= deadline.getTime(),
+    isPending: isCancellationPendingStatus(rawStatus),
+  };
 }
 
 function itemTs(item: LeanItem, booking?: LeanBooking): number {
@@ -250,9 +314,10 @@ export async function getMyTrips(
 
   const mapped: MyTripCard[] = items.map((item) => {
     const type = serviceTypeOf(item);
-    const tab = normalizeItemStatus(
-      item.item_status ?? bookingMap.get(item.booking_id)?.status,
-    );
+    const booking = bookingMap.get(item.booking_id);
+    const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status) || 'PENDING';
+    const tab = normalizeItemStatus(rawStatus);
+    const cancelPolicy = cancellationPolicy(item, booking);
     const amount =
       typeof item.total_price === 'number' && Number.isFinite(item.total_price)
         ? item.total_price
@@ -270,13 +335,18 @@ export async function getMyTrips(
           : hotel?.address ?? 'Tripwise listing',
         serviceType: 'hotel',
         status: tab,
-        statusLabel: statusLabel(tab),
+        rawStatus,
+        statusLabel: itemStatusLabel(rawStatus, tab),
         dateLabel: formatDateRange(item.start_date, item.end_date),
         amount,
         amountLabel: formatAmount(amount),
         imageUrl: pickImage([room?.image, ...(hotel?.images ?? []), hotel?.image]),
         route: hotel ? `/service_details/${hotel._id}` : '/my_trips',
         ticketCode: item.e_ticket_code ?? '',
+        canCancel: cancelPolicy.canCancel,
+        isCancellationPending: cancelPolicy.isPending,
+        cancelDeadline: cancelPolicy.deadlineIso,
+        cancelDeadlineLabel: cancelPolicy.deadlineLabel,
       };
     }
 
@@ -291,17 +361,22 @@ export async function getMyTrips(
           ? `Flight ${flight.flight_number}`
           : 'Flight booking',
         subtitle: flight
-          ? `${dep?._id ?? flight.departure_airport} → ${arr?._id ?? flight.arrival_airport}`
+          ? `${dep?._id ?? flight.departure_airport} -> ${arr?._id ?? flight.arrival_airport}`
           : 'Flight route',
         serviceType: 'flight',
         status: tab,
-        statusLabel: statusLabel(tab),
+        rawStatus,
+        statusLabel: itemStatusLabel(rawStatus, tab),
         dateLabel: formatDateRange(item.start_date, item.end_date),
         amount,
         amountLabel: formatAmount(amount),
         imageUrl: pickImage([flight?.image]),
         route: '/my_trips',
         ticketCode: item.e_ticket_code ?? '',
+        canCancel: cancelPolicy.canCancel,
+        isCancellationPending: cancelPolicy.isPending,
+        cancelDeadline: cancelPolicy.deadlineIso,
+        cancelDeadlineLabel: cancelPolicy.deadlineLabel,
       };
     }
 
@@ -313,13 +388,18 @@ export async function getMyTrips(
       subtitle: activity?.type ? `${activity.type} activity` : 'Activity experience',
       serviceType: 'activity',
       status: tab,
-      statusLabel: statusLabel(tab),
+      rawStatus,
+      statusLabel: itemStatusLabel(rawStatus, tab),
       dateLabel: formatDateRange(item.start_date, item.end_date),
       amount,
       amountLabel: formatAmount(amount),
       imageUrl: pickImage([activity?.image]),
       route: '/my_trips',
       ticketCode: item.e_ticket_code ?? '',
+      canCancel: cancelPolicy.canCancel,
+      isCancellationPending: cancelPolicy.isPending,
+      cancelDeadline: cancelPolicy.deadlineIso,
+      cancelDeadlineLabel: cancelPolicy.deadlineLabel,
     };
   });
 
@@ -371,6 +451,10 @@ function isCancelledStatus(value: unknown): boolean {
   return CANCELLED_ITEM_STATUSES.has(normalizeRawStatus(value));
 }
 
+function isCancellationPendingStatus(value: unknown): boolean {
+  return CANCELLATION_PENDING_STATUSES.has(normalizeRawStatus(value));
+}
+
 function isCancellableStatus(value: unknown): boolean {
   return CANCELLABLE_ITEM_STATUSES.has(normalizeRawStatus(value));
 }
@@ -403,6 +487,19 @@ export async function cancelMyTrip(
       bookingItemId,
       status: 'CANCELLED',
       message: 'Trip has already been cancelled.',
+      cancelDeadline: null,
+      cancelDeadlineLabel: null,
+    };
+  }
+
+  if (isCancellationPendingStatus(bookingItem.item_status)) {
+    return {
+      bookingId: bookingItem.booking_id,
+      bookingItemId,
+      status: 'CANCELLATION_PENDING',
+      message: 'Cancellation request is already waiting for admin approval.',
+      cancelDeadline: bookingItem.cancellation_deadline ?? null,
+      cancelDeadlineLabel: formatDeadline(bookingItem.cancellation_deadline ?? null),
     };
   }
 
@@ -410,48 +507,49 @@ export async function cancelMyTrip(
     throw new MyTripsError(409, 'This trip cannot be cancelled in its current status');
   }
 
+  const policy = cancellationPolicy(bookingItem, booking);
+  if (!policy.canCancel) {
+    throw new MyTripsError(
+      409,
+      `Cancellation window has expired. Deadline was ${policy.deadlineLabel ?? 'earlier'}.`,
+    );
+  }
+
   const now = new Date().toISOString();
   await BookingItem.updateOne(
     { _id: bookingItemId },
-    { $set: { item_status: 'CANCELLED', updated_at: now } },
-  );
-
-  const siblingItems = (await BookingItem.find({
-    booking_id: bookingItem.booking_id,
-  })
-    .select({ item_status: 1 })
-    .lean()) as Array<Pick<LeanItem, 'item_status'>>;
-  const allCancelled = siblingItems.every((item) => isCancelledStatus(item.item_status));
-
-  await Booking.updateOne(
-    { _id: bookingItem.booking_id },
     {
       $set: {
-        status: allCancelled ? 'CANCELLED' : booking.status ?? 'CONFIRMED',
+        item_status: 'CANCELLATION_PENDING',
+        cancellation_previous_status: normalizeRawStatus(bookingItem.item_status) || 'PENDING',
+        cancellation_requested_at: now,
+        cancellation_requested_by: userId,
+        cancellation_deadline: policy.deadlineIso,
+        cancellation_status: 'PENDING',
         updated_at: now,
       },
     },
   );
 
-  if (allCancelled) {
-    await Payment.updateMany(
-      { booking_id: bookingItem.booking_id },
-      { $set: { status: 'CANCELLED', updated_at: now } },
-    );
-  }
+  await Booking.updateOne(
+    { _id: bookingItem.booking_id },
+    { $set: { status: 'CANCELLATION_PENDING', updated_at: now } },
+  );
 
   await createNotification({
     userId,
     type: 'BOOKING',
-    title: 'Trip cancelled',
-    body: 'Your trip has been cancelled successfully.',
-    actionRoute: '/my_trips?status=cancelled',
+    title: 'Cancellation request sent',
+    body: 'Your cancellation request is waiting for admin approval.',
+    actionRoute: '/my_trips?status=upcoming',
   });
 
   return {
     bookingId: bookingItem.booking_id,
     bookingItemId,
-    status: 'CANCELLED',
-    message: 'Trip cancelled successfully.',
+    status: 'CANCELLATION_PENDING',
+    message: 'Cancellation request sent. Admin will review your refund.',
+    cancelDeadline: policy.deadlineIso,
+    cancelDeadlineLabel: policy.deadlineLabel,
   };
 }

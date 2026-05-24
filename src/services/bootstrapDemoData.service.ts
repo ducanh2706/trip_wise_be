@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { env } from '@/config/env';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
@@ -10,6 +10,12 @@ import { Room } from '@/models/Room.model';
 import { Trip } from '@/models/Trip.model';
 import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
+
+const DEMO_USD_RATE = 1 / 25_000;
+
+function usd(legacyAmount: number): number {
+  return Math.round(legacyAmount * DEMO_USD_RATE);
+}
 
 function isoNow(): string {
   return new Date().toISOString();
@@ -47,8 +53,8 @@ async function ensureUserAndWallet(): Promise<void> {
       $setOnInsert: {
         _id: `wallet-${env.demoUserId}`,
         user_id: env.demoUserId,
-        balance: 8_000_000,
-        loyalty_points: 12_500,
+        balance: usd(8_000_000),
+        loyalty_points: 0,
         version: 1,
         created_at: now,
         updated_at: now,
@@ -141,7 +147,7 @@ async function ensureHotelsAndRooms(): Promise<{ hotelId: number; roomId: number
     hotel_id: hotelId,
     room_type: 'Deluxe Ocean View',
     capacity: 2,
-    base_price: 1_200_000,
+    base_price: usd(1_200_000),
     image,
     deleted_at: null,
   });
@@ -191,7 +197,7 @@ async function ensureBookings(userId: string, providerId: string, roomId: number
       itemStatus: 'CONFIRMED',
       start: isoPlusDays(7),
       end: isoPlusDays(10),
-      amount: 3_960_000,
+      amount: usd(3_960_000),
       ticket: 'TW-4921',
     },
     {
@@ -199,7 +205,7 @@ async function ensureBookings(userId: string, providerId: string, roomId: number
       itemStatus: 'COMPLETED',
       start: isoPlusDays(-21),
       end: isoPlusDays(-18),
-      amount: 3_420_000,
+      amount: usd(3_420_000),
       ticket: 'TW-3874',
     },
     {
@@ -207,7 +213,7 @@ async function ensureBookings(userId: string, providerId: string, roomId: number
       itemStatus: 'CANCELLED',
       start: isoPlusDays(30),
       end: isoPlusDays(32),
-      amount: 1_980_000,
+      amount: usd(1_980_000),
       ticket: 'TW-9012',
     },
   ];
@@ -224,7 +230,7 @@ async function ensureBookings(userId: string, providerId: string, roomId: number
       total_amount: row.amount,
       discount_amount: 0,
       final_amount: row.amount,
-      currency: 'VND',
+      currency: 'USD',
       status: row.status,
       created_at: now,
       updated_at: now,

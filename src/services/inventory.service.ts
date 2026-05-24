@@ -1,11 +1,11 @@
-import { Hotel } from '@/models/Hotel.model';
+﻿import { Hotel } from '@/models/Hotel.model';
 import { Room } from '@/models/Room.model';
 import { RoomInventory } from '@/models/RoomInventory.model';
 import { PricingRule } from '@/models/PricingRule.model';
 
 // Vietnam public holidays (only the data window 2026-05..07 is exercised, but
 // the full year is listed so Holiday Peak is meaningful year-round). Adjust
-// freely — self-contained, no external calendar dependency.
+// freely - self-contained, no external calendar dependency.
 const HOLIDAYS = new Set<string>([
   '2026-01-01',
   '2026-02-16',
@@ -101,12 +101,12 @@ function demandFor(avgQty: number): { level: 'High' | 'Medium' | 'Low'; note: st
   if (avgQty >= 7) {
     return {
       level: 'Medium',
-      note: 'Demand in your area is steady — consider light surge pricing on weekends.',
+      note: 'Demand in your area is steady - consider light surge pricing on weekends.',
     };
   }
   return {
     level: 'Low',
-    note: 'Demand is soft this period — discounts may help fill open dates.',
+    note: 'Demand is soft this period - discounts may help fill open dates.',
   };
 }
 
@@ -283,7 +283,7 @@ export async function getInventoryOverview(
       hotelName: hotelName.get(room.hotel_id) ?? 'Listing',
       basePrice,
     },
-    currency: 'VND',
+    currency: 'USD',
     month: monthStr,
     monthLabel,
     leadingBlanks,
@@ -402,7 +402,7 @@ export async function updatePricingRules(
   if (input.lastMinuteDays !== undefined) {
     const n = Number(input.lastMinuteDays);
     if (!Number.isInteger(n) || n < 0 || n > 365) {
-      throw new InventoryError(400, 'lastMinuteDays must be 0–365');
+      throw new InventoryError(400, 'lastMinuteDays must be 0-365');
     }
     doc.last_minute_days = n;
   }

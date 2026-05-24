@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+﻿import { env } from '@/config/env';
 import { Activity } from '@/models/Activity.model';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
@@ -48,74 +48,74 @@ export interface ChatResponse {
   matchedItems: ChatContextItem[];
 }
 
-const priceFormatter = new Intl.NumberFormat('vi-VN');
+const priceFormatter = new Intl.NumberFormat('en-US');
 
 const rules: ChatRule[] = [
-  { intent: 'greeting', keywords: ['xin chao', 'chao', 'hello', 'hi'] },
+  { intent: 'greeting', keywords: ['hello', 'hi', 'hey'] },
   {
     intent: 'ask_price',
-    keywords: ['gia', 'bao nhieu', 'chi phi', 've', 'price', 'cost'],
+    keywords: ['price', 'cost', 'fee', 'how much', 'ticket', 'rate'],
   },
   {
     intent: 'ask_itinerary',
-    keywords: ['lich trinh', 'itinerary', 'ke hoach', 'di may ngay'],
+    keywords: ['itinerary', 'plan', 'schedule', 'how many days'],
   },
   {
     intent: 'suggest_destination',
-    keywords: ['goi y', 'dia diem', 'nen di dau', 'du lich o dau', 'recommend'],
+    keywords: ['recommend', 'suggest', 'destination', 'where should i go'],
   },
   {
     intent: 'book_tour',
-    keywords: ['dat tour', 'booking', 'dang ky tour', 'mua tour', 'dat phong'],
+    keywords: ['book tour', 'booking', 'reserve', 'buy tour', 'book room'],
   },
   {
     intent: 'hotel_booking',
-    keywords: ['khach san', 'hotel', 'phong', 'check in', 'check out'],
+    keywords: ['hotel', 'room', 'check in', 'check out'],
   },
   {
     intent: 'booking_status',
-    keywords: ['kiem tra booking', 'trang thai booking', 'don cua toi', 'my trips'],
+    keywords: ['booking status', 'my booking', 'my trips', 'order status'],
   },
   {
     intent: 'cancel_policy',
-    keywords: ['huy', 'hoan tien', 'doi lich', 'cancel', 'refund'],
+    keywords: ['cancel', 'cancellation', 'refund', 'reschedule'],
   },
   {
     intent: 'refund_time',
-    keywords: ['bao lau hoan tien', 'khi nao hoan tien', 'tien ve dau'],
+    keywords: ['refund time', 'when refund', 'where is my refund', 'money back'],
   },
   {
     intent: 'payment_method',
-    keywords: ['thanh toan', 'payment', 'the ngan hang', 'momo', 'zalopay'],
+    keywords: ['payment', 'card', 'bank card', 'paypal', 'wallet payment'],
   },
   {
     intent: 'voucher',
-    keywords: ['ma giam gia', 'voucher', 'coupon', 'khuyen mai', 'promo'],
+    keywords: ['voucher', 'coupon', 'discount code', 'promotion', 'promo'],
   },
-  { intent: 'wallet', keywords: ['wallet', 'vi tripwise', 'so du', 'diem thuong'] },
-  { intent: 'review', keywords: ['danh gia', 'review', 'rating', 'nhan xet'] },
+  { intent: 'wallet', keywords: ['wallet', 'balance', 'points', 'reward points'] },
+  { intent: 'review', keywords: ['review', 'rating', 'feedback'] },
   {
     intent: 'provider_support',
-    keywords: ['provider', 'nha cung cap', 'listing', 'quan ly don', 'rut tien'],
+    keywords: ['provider', 'host', 'listing', 'manage orders', 'payout'],
   },
   {
     intent: 'contact_support',
-    keywords: ['lien he', 'ho tro', 'support', 'tu van vien', 'hotline'],
+    keywords: ['contact', 'support', 'help center', 'hotline', 'agent'],
   },
-  { intent: 'thanks', keywords: ['cam on', 'thank', 'thanks'] },
+  { intent: 'thanks', keywords: ['thank', 'thanks'] },
 ];
 
 const destinationAliases = [
-  'Đà Lạt',
-  'Đà Nẵng',
-  'Phú Quốc',
+  'Da Lat',
+  'Da Nang',
+  'Phu Quoc',
   'Nha Trang',
   'Sa Pa',
-  'Hội An',
-  'Hà Nội',
-  'TP Hồ Chí Minh',
-  'Huế',
-  'Hạ Long',
+  'Hoi An',
+  'Hanoi',
+  'Ho Chi Minh City',
+  'Hue',
+  'Ha Long',
 ];
 
 function normalize(text: string): string {
@@ -123,7 +123,6 @@ function normalize(text: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
     .trim();
 }
 
@@ -132,8 +131,8 @@ function escapeRegExp(value: string): string {
 }
 
 function formatVnd(value: number | null | undefined): string {
-  if (typeof value !== 'number') return 'chưa có giá';
-  return `${priceFormatter.format(Math.round(value))}đ`;
+  if (typeof value !== 'number') return 'No price yet';
+  return `$${priceFormatter.format(Math.round(value))}`;
 }
 
 function detectIntent(message: string): ChatIntent {
@@ -285,7 +284,7 @@ async function loadTravelContext(
       items.push(
         ...bookingItems.map((item) => ({
           type: 'booking' as const,
-          title: `Chi tiết ${item.booking_id}`,
+          title: `Booking detail ${item.booking_id}`,
           details: {
             status: item.item_status,
             startDate: item.start_date ?? null,
@@ -328,14 +327,14 @@ async function loadTravelContext(
   if (['cancel_policy', 'refund_time', 'payment_method', 'voucher', 'wallet'].includes(intent)) {
     items.push({
       type: 'policy',
-      title: 'Chính sách TripWise',
+      title: 'Tripwise policy',
       details: {
         cancellation:
-          'Điều kiện hủy/đổi lịch phụ thuộc từng dịch vụ và hiển thị trong chi tiết booking.',
+          'Cancellation and rescheduling rules depend on each service and are shown in the booking detail page.',
         refund:
-          'Thời gian hoàn tiền phụ thuộc phương thức thanh toán và trạng thái xử lý của nhà cung cấp.',
+          'Refund timing depends on the payment method and the admin review status of the cancellation request.',
         payment:
-          'Người dùng nên kiểm tra tổng tiền, ngày đi, voucher và chính sách hủy trước khi xác nhận thanh toán.',
+          'Before confirming payment, review the total amount, dates, points discount, and cancellation policy.',
       },
     });
   }
@@ -345,16 +344,16 @@ async function loadTravelContext(
 
 function templateReply(intent: ChatIntent, context: ChatContextItem[]): string {
   if (intent === 'greeting') {
-    return 'Xin chào! Mình có thể hỗ trợ bạn tìm tour, hỏi giá, xem booking, chính sách hủy/hoàn tiền hoặc gợi ý lịch trình.';
+    return 'Hello! I can help you find tours, check prices, review bookings, explain cancellation and refund policies, or suggest an itinerary.';
   }
   if (intent === 'thanks') {
-    return 'Rất vui được hỗ trợ bạn. Bạn cần mình giúp thêm phần nào cho chuyến đi không?';
+    return 'Happy to help. Tell me what else you need for your trip.';
   }
   if (intent === 'contact_support') {
-    return 'Bạn có thể gửi tin nhắn tại màn hình này hoặc vào Profile > Help Center để xem kênh hỗ trợ phù hợp.';
+    return 'You can send a message here or open Profile > Help Center to find the best support channel.';
   }
   if (intent === 'provider_support') {
-    return 'Nếu bạn là nhà cung cấp, hãy vào Provider Dashboard để quản lý listing, Order Manager để xử lý đơn và Finance/Payout để theo dõi doanh thu.';
+    return 'If you are a provider, use Provider Dashboard to manage listings, Order Manager to handle bookings, and Finance/Payout to track revenue.';
   }
 
   const tours = context.filter((item) => item.type === 'tour');
@@ -363,9 +362,9 @@ function templateReply(intent: ChatIntent, context: ChatContextItem[]): string {
 
   if (intent === 'booking_status') {
     if (bookings.length === 0) {
-      return 'Mình chưa tìm thấy booking phù hợp trong tài khoản của bạn. Bạn có thể kiểm tra mã booking hoặc mở mục My Trips để xem danh sách đơn.';
+      return 'I could not find a matching booking in your account. Check the booking code or open My Trips to see your orders.';
     }
-    return `Mình tìm thấy ${bookings.length} thông tin booking liên quan:\n${bookings
+    return `I found ${bookings.length} related booking record(s):\n${bookings
       .slice(0, 4)
       .map((item) => `- ${item.title}: ${JSON.stringify(item.details)}`)
       .join('\n')}`;
@@ -373,53 +372,51 @@ function templateReply(intent: ChatIntent, context: ChatContextItem[]): string {
 
   if (intent === 'ask_price') {
     const lines = [...tours, ...hotels].slice(0, 5).map((item) => {
-      const price = item.details.price ?? item.details.priceFrom ?? 'chưa có giá';
-      return `- ${item.title}: từ ${price}`;
+      const price = item.details.price ?? item.details.priceFrom ?? 'No price yet';
+      return `- ${item.title}: from ${price}`;
     });
     if (lines.length > 0) {
-      return `Mình tìm thấy một số lựa chọn phù hợp:\n${lines.join('\n')}`;
+      return `I found a few matching options:\n${lines.join('\n')}`;
     }
-    return 'Mình chưa tìm thấy giá phù hợp trong dữ liệu hiện tại. Bạn hãy cho mình biết rõ điểm đến hoặc loại dịch vụ muốn tìm.';
+    return 'I could not find a matching price in the current data. Tell me the destination or service type you want to search for.';
   }
 
   if (['suggest_destination', 'book_tour', 'hotel_booking', 'ask_itinerary'].includes(intent)) {
     const lines = [...tours, ...hotels].slice(0, 5).map((item) => {
-      const price = item.details.price ?? item.details.priceFrom ?? 'chưa có giá';
+      const price = item.details.price ?? item.details.priceFrom ?? 'No price yet';
       return `- ${item.title}: ${price}`;
     });
     if (lines.length > 0) {
-      return `Dựa trên dữ liệu TripWise, bạn có thể tham khảo:\n${lines.join('\n')}`;
+      return `Based on Tripwise data, you may want to consider:\n${lines.join('\n')}`;
     }
   }
 
   if (intent === 'cancel_policy') {
-    return 'Điều kiện hủy hoặc đổi lịch phụ thuộc từng dịch vụ. Bạn nên mở booking trong My Trips để xem hạn hủy, mức phí nếu có và trạng thái hoàn tiền.';
+    return 'Cancellation or rescheduling depends on each service. Open the booking in My Trips to see the cancellation deadline, any fee, and refund status.';
   }
   if (intent === 'refund_time') {
-    return 'Thời gian hoàn tiền phụ thuộc phương thức thanh toán và trạng thái xử lý của nhà cung cấp. Nếu quá thời gian dự kiến, bạn nên liên hệ hỗ trợ kèm mã booking.';
+    return 'Refund timing depends on the payment method and admin review status. If it takes longer than expected, contact support with your booking code.';
   }
   if (intent === 'payment_method') {
-    return 'Bạn có thể thanh toán bằng các phương thức hiển thị ở màn hình checkout. Trước khi xác nhận, hãy kiểm tra ngày đi, tổng tiền, voucher và chính sách hủy.';
+    return 'You can pay with the methods shown on the checkout screen. Review dates, total amount, points discount, and cancellation policy before confirming.';
   }
   if (intent === 'voucher') {
-    return 'Bạn có thể nhập mã giảm giá ở màn hình checkout nếu dịch vụ hỗ trợ. Một số voucher có điều kiện về ngày đi, giá trị đơn hoặc loại dịch vụ.';
+    return 'You can enter a discount code on checkout if the service supports it. Some vouchers depend on travel dates, order value, or service type.';
   }
   if (intent === 'wallet') {
-    return 'Bạn có thể xem số dư, điểm thưởng và lịch sử giao dịch trong mục Wallet.';
+    return 'Open Wallet to view your balance, points, and transaction history.';
   }
   if (intent === 'review') {
     const reviews = context.filter((item) => item.type === 'reviewSummary');
     if (reviews.length > 0) {
-      return `Tóm tắt đánh giá hiện có:\n${reviews
-        .map(
-          (item) => `- ${item.title}: ${item.details.average}/5 (${item.details.count} đánh giá)`,
-        )
+      return `Current review summary:\n${reviews
+        .map((item) => `- ${item.title}: ${item.details.average}/5 (${item.details.count} reviews)`)
         .join('\n')}`;
     }
-    return 'Bạn có thể xem đánh giá trong trang chi tiết dịch vụ hoặc để lại đánh giá sau khi hoàn tất chuyến đi.';
+    return 'You can read reviews on a service detail page or leave a review after completing your trip.';
   }
 
-  return 'Mình chưa có đủ thông tin để trả lời chính xác. Bạn có thể hỏi rõ hơn về điểm đến, giá, booking, thanh toán hoặc chính sách hủy tour.';
+  return 'I do not have enough information to answer precisely yet. Ask me about a destination, price, booking, payment, points, or cancellation policy.';
 }
 
 async function callLlm(input: {
@@ -432,7 +429,7 @@ async function callLlm(input: {
 
   const prompt = JSON.stringify({
     instruction:
-      'Bạn là trợ lý du lịch của TripWise. Chỉ dùng dữ liệu trong CONTEXT và câu trả lời nháp. Không bịa giá, trạng thái booking, chính sách hoặc dữ liệu không có trong context. Trả lời ngắn gọn, tiếng Việt có dấu.',
+      'You are the Tripwise travel assistant. Use only the CONTEXT and draft answer. Do not invent prices, booking statuses, policies, or unavailable data. Reply concisely in English.',
     question: input.message,
     intent: input.intent,
     context: input.context,

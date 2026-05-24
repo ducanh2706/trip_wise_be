@@ -1,13 +1,14 @@
-// Seed a `trips` collection (itineraries) for the demo user — no trip data
-// exists. Each trip embeds days -> timed items referencing REAL activities
-// + REAL users (companions). Full rebuild, deterministic, safe to re-run.
+// Seed a `trips` collection (itineraries) for the demo user. No trip data
+// exists by default. Each trip embeds days -> timed items referencing REAL
+// activities and REAL users (companions). Full rebuild, deterministic, safe
+// to re-run.
 //
 // Run with:  node scripts/backfill-trips.js
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const mongoose = require('mongoose');
 
-// Demo user — same one slice 2 (wallet) pins; see src/config/env.ts.
+// Demo user: same one slice 2 (wallet) pins; see src/config/env.ts.
 const DEMO_USER_ID = '337b6ec4-bd20-474c-9318-5898cfba516e';
 
 function rng(seed) {
@@ -20,24 +21,30 @@ function rng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
 const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
 const randInt = (r, lo, hi) => lo + Math.floor(r() * (hi - lo + 1));
 
 const CATEGORIES = ['FOOD', 'SIGHTSEEING', 'TRANSPORT', 'OUTDOORS'];
+
 function deriveCategory(title, id) {
   const t = title || '';
-  if (/(ẩm thực|ăn|food|nhà hàng|gelato|cà phê|buffet|đặc sản)/i.test(t)) return 'FOOD';
-  if (/(xe|đưa đón|transfer|shuttle|tàu|phà|sân bay|airport)/i.test(t)) return 'TRANSPORT';
-  if (/(trekking|leo núi|lặn|biển|beach|hike|surf|kayak|camping|thác|đảo|rừng)/i.test(t)) return 'OUTDOORS';
-  if (/(tham quan|bảo tàng|di tích|chùa|đền|tour|phố cổ|cung điện|museum)/i.test(t)) return 'SIGHTSEEING';
+  if (/(food|restaurant|gelato|coffee|buffet|cuisine|dining|local dish)/i.test(t)) return 'FOOD';
+  if (/(car|transfer|shuttle|train|ferry|airport|flight)/i.test(t)) return 'TRANSPORT';
+  if (/(trekking|beach|hike|surf|kayak|camping|waterfall|island|forest)/i.test(t)) {
+    return 'OUTDOORS';
+  }
+  if (/(sightseeing|museum|landmark|temple|tour|old town|palace)/i.test(t)) {
+    return 'SIGHTSEEING';
+  }
   return CATEGORIES[id % CATEGORIES.length];
 }
 
 const TIMES = ['08:30', '10:00', '12:30', '15:00', '17:30', '20:00'];
 const DESTS = [
-  { name: 'Đà Nẵng, Việt Nam', title: 'Khám phá Đà Nẵng' },
-  { name: 'Nha Trang, Khánh Hòa', title: 'Kỳ nghỉ biển Nha Trang' },
-  { name: 'Hà Nội, Việt Nam', title: 'Hành trình Hà Nội' },
+  { name: 'Da Nang, Vietnam', title: 'Explore Da Nang' },
+  { name: 'Nha Trang, Khanh Hoa', title: 'Nha Trang Beach Break' },
+  { name: 'Hanoi, Vietnam', title: 'Hanoi City Journey' },
 ];
 const TRIPS = [
   { status: 'ONGOING', start: '2026-05-14', end: '2026-05-19' },
@@ -60,7 +67,7 @@ function addDays(iso, n) {
   for (const l of locs) locById[l._id] = l;
   const locName = (id) => {
     const l = locById[id];
-    if (!l) return 'Việt Nam';
+    if (!l) return 'Vietnam';
     const p = l.parent_id != null ? locById[l.parent_id] : null;
     return p ? `${l.name}, ${p.name}` : l.name;
   };
@@ -132,14 +139,10 @@ function addDays(iso, n) {
   await col.deleteMany({});
   await col.insertMany(docs);
   await col.createIndex({ user_id: 1, status: 1 });
-  console.log(
-    `trips rebuilt: inserted ${docs.length} for demo user ${DEMO_USER_ID}`,
-  );
+  console.log(`trips rebuilt: inserted ${docs.length} for demo user ${DEMO_USER_ID}`);
   for (const t of docs) {
     const items = t.days.reduce((s, d) => s + d.items.length, 0);
-    console.log(
-      `  ${t._id} ${t.status} "${t.title}" days=${t.days.length} items=${items}`,
-    );
+    console.log(`  ${t._id} ${t.status} "${t.title}" days=${t.days.length} items=${items}`);
   }
   await mongoose.disconnect();
 })().catch((e) => {

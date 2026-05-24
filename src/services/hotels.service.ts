@@ -1,4 +1,4 @@
-import { Hotel } from '@/models/Hotel.model';
+﻿import { Hotel } from '@/models/Hotel.model';
 import { Room } from '@/models/Room.model';
 import { Location } from '@/models/Location.model';
 import { Provider } from '@/models/Provider.model';
@@ -35,6 +35,9 @@ export interface HotelDetailResponse {
     bookingItemId: string;
     status: string;
     canCancel: boolean;
+    isCancellationPending: boolean;
+    cancelDeadline: string | null;
+    cancelDeadlineLabel: string | null;
   } | null;
 }
 
@@ -46,7 +49,64 @@ const ACTIVE_ITEM_STATUSES = [
   'PAID',
   'ACCEPTED',
   'APPROVED',
+  'CANCELLATION_PENDING',
 ];
+const CANCELLABLE_ITEM_STATUSES = new Set([
+  'PENDING',
+  'REQUESTED',
+  'AWAITING_APPROVAL',
+  'CONFIRMED',
+  'PAID',
+  'ACCEPTED',
+  'APPROVED',
+]);
+const SHORT_NOTICE_DAYS = 7;
+const SHORT_NOTICE_CANCEL_WINDOW_DAYS = 1;
+const STANDARD_CANCEL_WINDOW_DAYS = 7;
+
+function normalizeStatus(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toUpperCase();
+}
+
+function parseDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const date = value.length <= 10 ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDays(date: Date, days: number): Date {
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function formatDeadline(value: string | null): string | null {
+  const date = parseDate(value);
+  if (!date) return null;
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function cancellationDeadline(
+  item: { start_date?: string | null; created_at?: string | null },
+  booking?: { created_at?: string | null },
+): string {
+  const bookedAt = parseDate(booking?.created_at) ?? parseDate(item.created_at) ?? new Date();
+  const startDate = parseDate(item.start_date);
+  const daysUntilStart =
+    startDate == null
+      ? Number.POSITIVE_INFINITY
+      : Math.ceil((startDate.getTime() - bookedAt.getTime()) / 86_400_000);
+  const windowDays =
+    daysUntilStart <= SHORT_NOTICE_DAYS
+      ? SHORT_NOTICE_CANCEL_WINDOW_DAYS
+      : STANDARD_CANCEL_WINDOW_DAYS;
+  return addDays(bookedAt, windowDays).toISOString();
+}
 
 async function resolveExistingBookingForHotel(
   userId: string | undefined,
@@ -75,17 +135,30 @@ async function resolveExistingBookingForHotel(
     _id: { $in: bookingIds },
     user_id: userId,
   })
-    .select({ _id: 1, status: 1 })
+    .select({ _id: 1, created_at: 1, status: 1 })
     .lean();
-  const bookingSet = new Set(bookings.map((booking) => String(booking._id)));
-  const matchedItem = candidateItems.find((item) => bookingSet.has(item.booking_id));
+  const bookingMap = new Map(bookings.map((booking) => [String(booking._id), booking] as const));
+  const matchedItem = candidateItems.find((item) => bookingMap.has(item.booking_id));
   if (!matchedItem) return null;
+  const matchedBooking = bookingMap.get(matchedItem.booking_id);
+  const rawStatus = normalizeStatus(matchedItem.item_status ?? matchedBooking?.status);
+  const isCancellationPending = rawStatus === 'CANCELLATION_PENDING';
+  const cancelDeadline = matchedItem.cancellation_deadline ?? cancellationDeadline(
+    matchedItem,
+    matchedBooking,
+  );
 
   return {
     bookingId: matchedItem.booking_id,
     bookingItemId: matchedItem._id,
     status: matchedItem.item_status ?? 'CONFIRMED',
-    canCancel: true,
+    canCancel:
+      !isCancellationPending &&
+      CANCELLABLE_ITEM_STATUSES.has(rawStatus) &&
+      Date.now() <= new Date(cancelDeadline).getTime(),
+    isCancellationPending,
+    cancelDeadline,
+    cancelDeadlineLabel: formatDeadline(cancelDeadline),
   };
 }
 
@@ -149,7 +222,7 @@ export async function getHotelDetail(
           : [],
     amenities: hotel.amenities ?? [],
     priceFrom: cheapestRoom?.base_price ?? null,
-    currency: 'VND',
+    currency: 'USD',
     host: provider ? { id: provider._id, name: provider.business_name } : null,
     policies: { freeCancellation: true },
     isFavoritedByMe: false,

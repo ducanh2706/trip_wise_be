@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+﻿import { randomUUID } from 'crypto';
 import { Activity, type ActivityDoc } from '@/models/Activity.model';
 import { Airport, type AirportDoc } from '@/models/Airport.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
@@ -9,7 +9,7 @@ import { Provider, type ProviderDoc } from '@/models/Provider.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { PLATFORM_COMMISSION_RATE, calculateCommission } from '@/services/walletLedger.service';
 
-const CURRENCY = 'VND';
+const CURRENCY = 'USD';
 const SERVICE_FEE_RATE = PLATFORM_COMMISSION_RATE;
 const DEFAULT_TX_LIMIT = 10;
 
@@ -441,7 +441,7 @@ function describeItem(item: LeanItem, context: Awaited<ReturnType<typeof loadCon
 
   if (room || hotel) {
     return {
-      subtitle: `${hotel?.name ?? 'Hotel stay'}${room?.room_type ? ` · ${room.room_type}` : ''}`,
+      subtitle: `${hotel?.name ?? 'Hotel stay'}${room?.room_type ? ` Â· ${room.room_type}` : ''}`,
       serviceType: 'hotel' as ServiceType,
       iconKey: 'hotel',
     };

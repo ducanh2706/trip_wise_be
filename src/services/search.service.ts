@@ -1,4 +1,4 @@
-import { Activity, type ActivityDoc } from '@/models/Activity.model';
+﻿import { Activity, type ActivityDoc } from '@/models/Activity.model';
 import { Airport, type AirportDoc } from '@/models/Airport.model';
 import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
@@ -13,7 +13,7 @@ const FLIGHT_LIMIT = 8;
 const TOUR_LIMIT = 8;
 const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80';
-const priceFormatter = new Intl.NumberFormat('vi-VN');
+const priceFormatter = new Intl.NumberFormat('en-US');
 
 type SearchCategory = 'all' | 'hotels' | 'flights' | 'tours' | 'train';
 
@@ -126,7 +126,7 @@ function formatVnd(value: number | null): string | null {
     return null;
   }
 
-  return `${priceFormatter.format(Math.round(value))}đ`;
+  return `$${priceFormatter.format(Math.round(value))}`;
 }
 
 function pickPrimaryImage(
@@ -255,7 +255,7 @@ function buildFlightTitle(
   const departureCode = departure?._id ?? flight.departure_airport;
   const arrivalCode = arrival?._id ?? flight.arrival_airport;
 
-  return `${departureCode} → ${arrivalCode}`;
+  return `${departureCode} -> ${arrivalCode}`;
 }
 
 function buildFlightSubtitle(
@@ -273,7 +273,7 @@ function buildFlightSubtitle(
     : null;
 
   if (departureLocation && arrivalLocation) {
-    return `${departureLocation} → ${arrivalLocation}`;
+    return `${departureLocation} -> ${arrivalLocation}`;
   }
 
   return flight.flight_number;
@@ -284,10 +284,10 @@ function buildFlightMetaLabel(flight: LeanFlight): string {
   const arrival = new Date(flight.arrival_time);
   const seats = flight.available_seats ?? 0;
 
-  return `${departure.toLocaleDateString('vi-VN')} • ${departure.toLocaleTimeString(
-    'vi-VN',
+  return `${departure.toLocaleDateString('en-US')} • ${departure.toLocaleTimeString(
+    'en-US',
     { hour: '2-digit', minute: '2-digit' },
-  )} - ${arrival.toLocaleTimeString('vi-VN', {
+  )} - ${arrival.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
   })} • ${seats} seats`;

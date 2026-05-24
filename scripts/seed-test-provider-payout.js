@@ -1,11 +1,11 @@
-const { randomUUID } = require('crypto');
+﻿const { randomUUID } = require('crypto');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 
 dotenv.config();
 
 const email = (process.argv[2] || 'thang3@gmail.com').trim().toLowerCase();
-const grossAmount = Math.round(Number(process.argv[3] || 100000));
+const grossAmount = Math.round(Number(process.argv[3] || 100));
 const adminWalletUserId = process.env.ADMIN_WALLET_USER_ID || 'tripwise-admin-wallet';
 const demoUserId =
   process.env.DEMO_USER_ID || '337b6ec4-bd20-474c-9318-5898cfba516e';
@@ -105,7 +105,7 @@ async function main() {
     total_amount: grossAmount,
     discount_amount: 0,
     final_amount: grossAmount,
-    currency: 'VND',
+    currency: 'USD',
     status: 'PENDING',
     created_at: now,
     updated_at: now,

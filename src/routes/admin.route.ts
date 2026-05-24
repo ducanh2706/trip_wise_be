@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import {
   createTestEscrowForProviderHandler,
+  listAdminCancellationRequestsHandler,
   listAdminListingsHandler,
   listAdminProviderPayoutsHandler,
   listProviderApplicationsHandler,
   payProviderForPeriodHandler,
+  reviewCancellationRequestHandler,
   reviewAdminListingHandler,
   reviewProviderApplicationHandler,
 } from '@/controllers/admin.controller';
@@ -18,5 +20,7 @@ router.patch('/listings/:listingId/review', reviewAdminListingHandler);
 router.get('/provider-payouts', listAdminProviderPayoutsHandler);
 router.post('/provider-payouts/test-escrow', createTestEscrowForProviderHandler);
 router.post('/provider-payouts/:providerId/pay', payProviderForPeriodHandler);
+router.get('/cancellations', listAdminCancellationRequestsHandler);
+router.patch('/cancellations/:bookingItemId/review', reviewCancellationRequestHandler);
 
 export default router;
