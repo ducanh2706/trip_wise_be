@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import {
+  deleteProfileVerificationDocument,
   getProfile,
   ProfileError,
   updateProfileAvatar,
@@ -48,6 +49,27 @@ export async function updateProfileVerificationDocumentHandler(
         req.params.documentType,
         req.body,
         publicBaseUrl,
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function deleteProfileVerificationDocumentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(
+      await deleteProfileVerificationDocument(
+        req.auth!.userId,
+        req.params.documentType,
       ),
     );
   } catch (error) {

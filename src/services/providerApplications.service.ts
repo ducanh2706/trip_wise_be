@@ -72,6 +72,20 @@ function parseYearsExperience(value: unknown): number {
   return Math.round(parsed);
 }
 
+function normalizeMimeType(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function normalizeBase64(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  const commaIdx = trimmed.indexOf(',');
+  if (commaIdx > 0 && trimmed.slice(0, commaIdx).includes('base64')) {
+    return trimmed.slice(commaIdx + 1).trim();
+  }
+  return trimmed;
+}
+
 function normalizeStatus(value: unknown): ProviderApplicationStatus {
   const normalized = normalizeText(value).toUpperCase();
   if (normalized === 'APPROVED') return 'APPROVED';
@@ -154,6 +168,9 @@ export async function submitProviderApplication(
   const specialty = normalizeText(input.specialty);
   const bio = normalizeText(input.bio);
   const yearsExperience = parseYearsExperience(input.yearsExperience);
+  const licenseFileName = normalizeText(input.licenseFileName);
+  const licenseMimeType = normalizeMimeType(input.licenseMimeType);
+  const licenseDataBase64 = normalizeBase64(input.licenseDataBase64);
 
   if (!fullName) {
     throw new ProviderApplicationError(400, 'Full name is required');
@@ -167,6 +184,22 @@ export async function submitProviderApplication(
   if (bio.length < 20) {
     throw new ProviderApplicationError(400, 'Bio must be at least 20 characters');
   }
+  if (!licenseFileName || !licenseDataBase64) {
+    throw new ProviderApplicationError(400, 'Business license image is required');
+  }
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(licenseMimeType)) {
+    throw new ProviderApplicationError(400, 'Business license must be JPG, PNG, or WEBP');
+  }
+  let licenseBuffer: Buffer;
+  try {
+    licenseBuffer = Buffer.from(licenseDataBase64, 'base64');
+  } catch {
+    throw new ProviderApplicationError(400, 'Invalid business license image data');
+  }
+  if (!licenseBuffer.length) {
+    throw new ProviderApplicationError(400, 'Business license image is empty');
+  }
+  const licenseImageUrl = `data:${licenseMimeType};base64,${licenseBuffer.toString('base64')}`;
 
   const user = (await User.findById(userId).lean()) as LeanUser | null;
   if (!user) {
@@ -189,6 +222,9 @@ export async function submitProviderApplication(
         specialty,
         bio,
         years_experience: yearsExperience,
+        license_file_name: licenseFileName,
+        license_mime_type: licenseMimeType,
+        license_image_url: licenseImageUrl,
         status: 'PENDING',
         submitted_at: now,
         reviewed_at: null,

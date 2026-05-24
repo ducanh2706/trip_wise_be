@@ -306,3 +306,30 @@ export async function updateProfileVerificationDocument(
 
   return { verification: serializeVerification(verification) };
 }
+
+export async function deleteProfileVerificationDocument(
+  userId: string,
+  rawDocumentType: unknown,
+): Promise<UpdateVerificationDocumentResponse> {
+  const documentType = normalizeVerificationDocumentType(rawDocumentType);
+  const config = VERIFICATION_DOCUMENTS[documentType];
+  const updatedAt = new Date().toISOString();
+  const resetNote = 'Not submitted';
+  const updates: Record<string, unknown> = {
+    [config.uploadedField]: false,
+    [config.noteField]: resetNote,
+    [config.imageField]: null,
+    updated_at: updatedAt,
+  };
+
+  const verification = await ProfileVerification.findByIdAndUpdate(
+    userId,
+    {
+      $set: updates,
+      $setOnInsert: { _id: userId },
+    },
+    { new: true, upsert: true },
+  ).lean();
+
+  return { verification: serializeVerification(verification) };
+}
