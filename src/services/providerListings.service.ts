@@ -1,6 +1,3 @@
-import { randomUUID } from 'crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
@@ -86,9 +83,6 @@ export class ProviderListingError extends Error {
   }
 }
 
-const DEFAULT_IMAGE =
-  'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80';
-const LISTING_IMAGE_DIR = path.resolve(process.cwd(), 'uploads/listings');
 const MAX_LISTING_IMAGE_BYTES = 5 * 1024 * 1024;
 const MIME_TO_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -143,7 +137,7 @@ function pickImage(...values: Array<string | null | undefined>): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim().length > 0) return value;
   }
-  return DEFAULT_IMAGE;
+  return '';
 }
 
 function resolveLocationName(raw: unknown): string {
@@ -162,12 +156,6 @@ function numberValue(raw: unknown, fallback: number): number {
   return n;
 }
 
-function normalizeFileName(value: unknown): string {
-  if (typeof value !== 'string') return 'listing';
-  const normalized = value.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
-  return normalized.length > 0 ? normalized : 'listing';
-}
-
 function normalizeBase64(value: unknown): string {
   if (typeof value !== 'string') return '';
   const trimmed = value.trim();
@@ -180,7 +168,7 @@ function normalizeBase64(value: unknown): string {
 
 async function saveListingImage(
   input: Record<string, unknown>,
-  publicBaseUrl: string,
+  _publicBaseUrl: string,
 ): Promise<string> {
   const directUrl = textValue(input.imageUrl, '');
   if (directUrl) return directUrl;
@@ -189,7 +177,7 @@ async function saveListingImage(
     input.imageUpload && typeof input.imageUpload === 'object'
       ? (input.imageUpload as Record<string, unknown>)
       : null;
-  if (!upload) return DEFAULT_IMAGE;
+  if (!upload) return '';
 
   const mimeType = textValue(upload.mimeType, '').toLowerCase();
   const ext = MIME_TO_EXT[mimeType];
@@ -215,68 +203,10 @@ async function saveListingImage(
   if (buffer.length > MAX_LISTING_IMAGE_BYTES) {
     throw new ProviderListingError(413, 'Listing image exceeds 5MB limit');
   }
-
-  await mkdir(LISTING_IMAGE_DIR, { recursive: true });
-  const fileName = `${randomUUID()}-${normalizeFileName(upload.fileName)}.${ext}`;
-  await writeFile(path.join(LISTING_IMAGE_DIR, fileName), buffer);
-  return `${publicBaseUrl}/uploads/listings/${fileName}`;
-}
-
-async function ensureProviderListing(providerId: string): Promise<void> {
-  const existing = await Hotel.findOne({
-    provider_id: providerId,
-    deleted_at: null,
-  })
-    .select({ _id: 1 })
-    .lean();
-  if (existing) return;
-
-  const [maxHotel, maxRoom, fallbackLocation] = await Promise.all([
-    Hotel.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
-    Room.findOne({}).sort({ _id: -1 }).select({ _id: 1 }).lean(),
-    Location.findOne({}).sort({ _id: 1 }).select({ _id: 1, name: 1 }).lean(),
-  ]);
-  if (!fallbackLocation) return;
-
-  const now = new Date().toISOString();
-  const hotelId = (maxHotel?._id ?? 0) + 1;
-  const roomId = (maxRoom?._id ?? 0) + 1;
-
-  await Hotel.create({
-    _id: hotelId,
-    provider_id: providerId,
-    location_id: fallbackLocation._id,
-    name: 'Tripwise Signature Residence',
-    address: fallbackLocation.name,
-    star_rating: 4.8,
-    status: 'LIVE',
-    listing_status: 'active',
-    listing_category: 'Hotel',
-    image: DEFAULT_IMAGE,
-    images: [DEFAULT_IMAGE],
-    description: 'Premium provider listing auto-created for dashboard completeness.',
-    amenities: ['WiFi', 'Pool', 'Parking'],
-    bedrooms: 2,
-    bathrooms: 2,
-    max_guests: 4,
-    created_at: now,
-    updated_at: now,
-    deleted_at: null,
-  });
-  await Room.create({
-    _id: roomId,
-    hotel_id: hotelId,
-    room_type: 'Deluxe Suite',
-    capacity: 4,
-    base_price: 299,
-    image: DEFAULT_IMAGE,
-    deleted_at: null,
-  });
+  return `data:${mimeType};base64,${base64Data}`;
 }
 
 async function listingBase(providerId: string) {
-  await ensureProviderListing(providerId);
-
   const [hotels, rooms] = await Promise.all([
     Hotel.find({
       provider_id: providerId,
@@ -501,6 +431,7 @@ export async function updateProviderListing(
   providerId: string,
   idRaw: unknown,
   input: Record<string, unknown>,
+  publicBaseUrl: string,
 ) {
   const id = Number(idRaw);
   if (!Number.isInteger(id) || id <= 0) {
@@ -540,6 +471,11 @@ export async function updateProviderListing(
     updates.bathrooms = Math.max(1, Math.round(numberValue(input.bathrooms, 1)));
   if (input.maxGuests !== undefined)
     updates.max_guests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
+  if (input.imageUpload !== undefined || input.imageUrl !== undefined) {
+    const imageUrl = await saveListingImage(input, publicBaseUrl);
+    updates.image = imageUrl;
+    updates.images = [imageUrl];
+  }
 
   await Hotel.updateOne({ _id: id }, { $set: updates });
 
@@ -547,7 +483,9 @@ export async function updateProviderListing(
     input.pricePerNight !== undefined ||
     input.price !== undefined ||
     input.maxGuests !== undefined ||
-    input.roomType !== undefined
+    input.roomType !== undefined ||
+    input.imageUpload !== undefined ||
+    input.imageUrl !== undefined
   ) {
     const room = await Room.findOne({ hotel_id: id, deleted_at: null }).sort({
       base_price: 1,
@@ -565,6 +503,9 @@ export async function updateProviderListing(
       }
       if (input.roomType !== undefined) {
         room.room_type = textValue(input.roomType, room.room_type ?? 'Room');
+      }
+      if (updates.image !== undefined) {
+        room.image = textValue(updates.image, room.image ?? '');
       }
       await room.save();
     }

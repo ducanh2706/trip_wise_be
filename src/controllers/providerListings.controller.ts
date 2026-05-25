@@ -75,7 +75,8 @@ export async function updateProviderListingHandler(
 ): Promise<void> {
   try {
     const providerId = await resolveProviderIdForUser(req.auth!.userId);
-    res.json(await updateProviderListing(providerId, req.params.id, req.body ?? {}));
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
+    res.json(await updateProviderListing(providerId, req.params.id, req.body ?? {}, publicBaseUrl));
   } catch (error) {
     handleProviderListingError(error, res, next);
   }
