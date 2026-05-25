@@ -147,7 +147,7 @@ async function ensureHotelsAndRooms(): Promise<{ hotelId: number; roomId: number
     hotel_id: hotelId,
     room_type: 'Deluxe Ocean View',
     capacity: 2,
-    base_price: usd(1_200_000),
+    base_price: 180,
     image,
     deleted_at: null,
   });

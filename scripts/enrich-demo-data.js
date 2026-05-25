@@ -217,7 +217,7 @@ function makeRooms() {
       hotel_id: 1001,
       room_type: 'Deluxe Ocean View',
       capacity: 2,
-      base_price: usd(1200000),
+      base_price: 180,
       image:
         'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -227,7 +227,7 @@ function makeRooms() {
       hotel_id: 1002,
       room_type: 'Skyline Studio',
       capacity: 2,
-      base_price: usd(1450000),
+      base_price: 260,
       image:
         'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -237,7 +237,7 @@ function makeRooms() {
       hotel_id: 1003,
       room_type: 'Heritage Family Room',
       capacity: 4,
-      base_price: usd(980000),
+      base_price: 140,
       image:
         'https://images.unsplash.com/photo-1566669437685-b88d8f2ea7f7?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -247,7 +247,7 @@ function makeRooms() {
       hotel_id: 1004,
       room_type: 'Riverside Villa Suite',
       capacity: 6,
-      base_price: usd(1750000),
+      base_price: 480,
       image:
         'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -257,7 +257,7 @@ function makeRooms() {
       hotel_id: 1005,
       room_type: 'Bay Front King',
       capacity: 3,
-      base_price: usd(1550000),
+      base_price: 320,
       image:
         'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -267,7 +267,7 @@ function makeRooms() {
       hotel_id: 1010,
       room_type: 'Sunset Bungalow',
       capacity: 2,
-      base_price: usd(1320000),
+      base_price: 220,
       image:
         'https://images.unsplash.com/photo-1455587734955-081b22074882?auto=format&fit=crop&w=1200&q=80',
       deleted_at: null,
@@ -904,7 +904,7 @@ function makeRoomInventory(roomIds) {
         priceOverride = null;
       } else if (bucket < 55) {
         availableQty = 5 + (bucket % 5);
-        priceOverride = usd(1500000 + ((bucket % 3) * 150000));
+        priceOverride = 220 + ((bucket % 3) * 30);
       } else {
         availableQty = 8 + (bucket % 10);
         priceOverride = null;

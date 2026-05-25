@@ -38,6 +38,13 @@ const moneyFieldsByCollection = {
 
 const currencyCollections = ['bookings', 'provider_payout_requests'];
 
+function shouldConvert(collectionName, field, value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  if (collectionName === 'rooms' && field === 'base_price') return value > 2000;
+  if (collectionName === 'room_inventory' && field === 'price_override') return value > 2000;
+  return true;
+}
+
 function toUsd(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return value;
   return Math.round((value / VND_PER_USD) * 100) / 100;
@@ -59,10 +66,11 @@ async function convertCollection(db, collectionName, fields) {
     if (!hasConvertibleField(doc, fields)) continue;
     const $set = {};
     for (const field of fields) {
-      if (typeof doc[field] === 'number' && Number.isFinite(doc[field])) {
+      if (shouldConvert(collectionName, field, doc[field])) {
         $set[field] = toUsd(doc[field]);
       }
     }
+    if (Object.keys($set).length === 0) continue;
     ops.push({ updateOne: { filter: { _id: doc._id }, update: { $set } } });
     if (ops.length >= 500) {
       const result = await collection.bulkWrite(ops, { ordered: false });

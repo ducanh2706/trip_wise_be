@@ -16,7 +16,13 @@ type LeanRoom = Pick<RoomDoc, '_id' | 'hotel_id' | 'room_type' | 'image'>;
 type LeanHotel = Pick<HotelDoc, '_id' | 'name' | 'address' | 'image' | 'images'>;
 type LeanFlight = Pick<
   FlightDoc,
-  '_id' | 'flight_number' | 'departure_airport' | 'arrival_airport' | 'image'
+  | '_id'
+  | 'flight_number'
+  | 'departure_airport'
+  | 'arrival_airport'
+  | 'departure_time'
+  | 'arrival_time'
+  | 'image'
 >;
 type LeanAirport = Pick<AirportDoc, '_id' | 'name'>;
 type LeanActivity = Pick<ActivityDoc, '_id' | 'title' | 'image' | 'type'>;
@@ -47,6 +53,44 @@ export interface MyTripsResponse {
   counts: Record<UiTab, number>;
   featured: MyTripCard | null;
   items: MyTripCard[];
+}
+
+export interface MyTripDetail {
+  id: string;
+  bookingId: string;
+  title: string;
+  subtitle: string;
+  locationLabel: string;
+  serviceType: ServiceType;
+  status: UiTab;
+  rawStatus: string;
+  statusLabel: string;
+  imageUrl: string;
+  ticketCode: string;
+  dateLabel: string;
+  startDate: string | null;
+  endDate: string | null;
+  startDateTitle: string;
+  endDateTitle: string;
+  startDateLabel: string;
+  endDateLabel: string;
+  nights: number | null;
+  nightsLabel: string;
+  quantity: number;
+  quantityTitle: string;
+  quantityLabel: string;
+  pricePerUnit: number;
+  pricePerUnitTitle: string;
+  pricePerUnitLabel: string;
+  totalAmount: number;
+  totalAmountLabel: string;
+  bookingCreatedAt: string | null;
+  bookingCreatedAtLabel: string;
+  canCancel: boolean;
+  isCancellationPending: boolean;
+  cancelDeadline: string | null;
+  cancelDeadlineLabel: string | null;
+  cancellationPolicyLabel: string;
 }
 
 export interface CancelMyTripResponse {
@@ -151,6 +195,10 @@ function formatAmount(amount: number): string {
   }
 }
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 function pickImage(values: Array<string | null | undefined>): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim().length > 0) {
@@ -209,6 +257,31 @@ function formatDeadline(value: string | null): string | null {
   });
 }
 
+function formatDateTime(value?: string | null): string {
+  if (!value) return 'Not set';
+  const date = parseDate(value);
+  if (!date) return value;
+  const hasTime = value.includes('T');
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    ...(hasTime ? { hour: '2-digit', minute: '2-digit' } : {}),
+  });
+}
+
+function diffNights(start?: string | null, end?: string | null): number | null {
+  const startDate = parseDate(start);
+  const endDate = parseDate(end);
+  if (!startDate || !endDate) return null;
+  const diff = Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000);
+  return diff > 0 ? diff : null;
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 function cancellationDeadline(item: LeanItem, booking?: LeanBooking): Date {
   const bookedAt = parseDate(booking?.created_at) ?? parseDate(item.created_at) ?? new Date();
   const startDate = parseDate(item.start_date);
@@ -233,6 +306,25 @@ function cancellationPolicy(item: LeanItem, booking?: LeanBooking) {
     canCancel: isCancellableStatus(rawStatus) && Date.now() <= deadline.getTime(),
     isPending: isCancellationPendingStatus(rawStatus),
   };
+}
+
+function cancellationPolicyLabel(item: LeanItem, booking: LeanBooking | undefined): string {
+  const policy = cancellationPolicy(item, booking);
+  const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status);
+  if (isCancellationPendingStatus(rawStatus)) {
+    return 'Waiting for admin cancellation approval.';
+  }
+  if (isCancelledStatus(rawStatus)) {
+    return 'This booking has been cancelled.';
+  }
+  if (policy.canCancel) {
+    return policy.deadlineLabel
+      ? `Cancellation can be requested until ${policy.deadlineLabel}.`
+      : 'Cancellation can still be requested.';
+  }
+  return policy.deadlineLabel
+    ? `Cancellation window closed on ${policy.deadlineLabel}.`
+    : 'Cancellation is not available for this booking.';
 }
 
 function itemTs(item: LeanItem, booking?: LeanBooking): number {
@@ -291,6 +383,8 @@ export async function getMyTrips(
       flight_number: 1,
       departure_airport: 1,
       arrival_airport: 1,
+      departure_time: 1,
+      arrival_time: 1,
       image: 1,
     })
     .lean()) as LeanFlight[];
@@ -341,7 +435,7 @@ export async function getMyTrips(
         amount,
         amountLabel: formatAmount(amount),
         imageUrl: pickImage([room?.image, ...(hotel?.images ?? []), hotel?.image]),
-        route: hotel ? `/service_details/${hotel._id}` : '/my_trips',
+        route: `/my_trip_booking_detail/${item._id}`,
         ticketCode: item.e_ticket_code ?? '',
         canCancel: cancelPolicy.canCancel,
         isCancellationPending: cancelPolicy.isPending,
@@ -371,7 +465,7 @@ export async function getMyTrips(
         amount,
         amountLabel: formatAmount(amount),
         imageUrl: pickImage([flight?.image]),
-        route: '/my_trips',
+        route: `/my_trip_booking_detail/${item._id}`,
         ticketCode: item.e_ticket_code ?? '',
         canCancel: cancelPolicy.canCancel,
         isCancellationPending: cancelPolicy.isPending,
@@ -394,7 +488,7 @@ export async function getMyTrips(
       amount,
       amountLabel: formatAmount(amount),
       imageUrl: pickImage([activity?.image]),
-      route: '/my_trips',
+      route: `/my_trip_booking_detail/${item._id}`,
       ticketCode: item.e_ticket_code ?? '',
       canCancel: cancelPolicy.canCancel,
       isCancellationPending: cancelPolicy.isPending,
@@ -444,6 +538,178 @@ export async function getMyTrips(
     counts,
     featured,
     items: prioritized,
+  };
+}
+
+export async function getMyTripDetail(
+  userId: string,
+  bookingItemIdInput: unknown,
+): Promise<MyTripDetail> {
+  const bookingItemId = normalizeMaybeBookingId(bookingItemIdInput);
+  if (!bookingItemId) {
+    throw new MyTripsError(400, 'Invalid booking item id');
+  }
+
+  const item = (await BookingItem.findById(bookingItemId).lean()) as LeanItem | null;
+  if (!item) {
+    throw new MyTripsError(404, 'Trip not found');
+  }
+
+  const booking = (await Booking.findOne({
+    _id: item.booking_id,
+    user_id: userId,
+  })
+    .select({ _id: 1, created_at: 1, updated_at: 1, status: 1 })
+    .lean()) as LeanBooking | null;
+  if (!booking) {
+    throw new MyTripsError(404, 'Trip not found');
+  }
+
+  const type = serviceTypeOf(item);
+  let title = 'Trip booking';
+  let subtitle = 'Tripwise booking';
+  let locationLabel = '';
+  let imageUrl = DEFAULT_IMAGE;
+  let startDate = item.start_date ?? null;
+  let endDate = item.end_date ?? null;
+  let startDateTitle = 'Start';
+  let endDateTitle = 'End';
+  let quantityTitle = 'Guests';
+  let quantitySingular = 'guest';
+  let quantityPlural = 'guests';
+  let pricePerUnitTitle = 'Price per unit';
+
+  if (type === 'hotel') {
+    const room =
+      item.room_id == null
+        ? null
+        : ((await Room.findOne({ _id: item.room_id, deleted_at: null })
+            .select({ _id: 1, hotel_id: 1, room_type: 1, image: 1 })
+            .lean()) as LeanRoom | null);
+    const hotel =
+      room == null
+        ? null
+        : ((await Hotel.findOne({ _id: room.hotel_id, deleted_at: null })
+            .select({ _id: 1, name: 1, address: 1, image: 1, images: 1 })
+            .lean()) as LeanHotel | null);
+
+    title = hotel?.name ?? 'Hotel booking';
+    subtitle = room?.room_type ?? 'Room booking';
+    locationLabel = hotel?.address ?? 'Tripwise listing';
+    imageUrl = pickImage([room?.image, ...(hotel?.images ?? []), hotel?.image]);
+    startDateTitle = 'Check-in';
+    endDateTitle = 'Check-out';
+    pricePerUnitTitle = 'Price per night';
+  } else if (type === 'flight') {
+    const flight =
+      item.flight_id == null
+        ? null
+        : ((await Flight.findOne({ _id: item.flight_id, deleted_at: null })
+            .select({
+              _id: 1,
+              flight_number: 1,
+              departure_airport: 1,
+              arrival_airport: 1,
+              departure_time: 1,
+              arrival_time: 1,
+              image: 1,
+            })
+            .lean()) as LeanFlight | null);
+    const airports = flight
+      ? ((await Airport.find({
+          _id: { $in: [flight.departure_airport, flight.arrival_airport] },
+        })
+          .select({ _id: 1, name: 1 })
+          .lean()) as LeanAirport[])
+      : [];
+    const airportMap = new Map(airports.map((airport) => [airport._id, airport] as const));
+    const departure = flight ? airportMap.get(flight.departure_airport) : undefined;
+    const arrival = flight ? airportMap.get(flight.arrival_airport) : undefined;
+
+    title = flight?.flight_number ? `Flight ${flight.flight_number}` : 'Flight booking';
+    subtitle = flight
+      ? `${departure?._id ?? flight.departure_airport} -> ${
+          arrival?._id ?? flight.arrival_airport
+        }`
+      : 'Flight route';
+    locationLabel = flight
+      ? `${departure?.name ?? flight.departure_airport} to ${
+          arrival?.name ?? flight.arrival_airport
+        }`
+      : 'Flight route';
+    imageUrl = pickImage([flight?.image]);
+    startDate = item.start_date ?? flight?.departure_time ?? null;
+    endDate = item.end_date ?? flight?.arrival_time ?? null;
+    startDateTitle = 'Departure';
+    endDateTitle = 'Arrival';
+    quantityTitle = 'Travelers';
+    quantitySingular = 'traveler';
+    quantityPlural = 'travelers';
+    pricePerUnitTitle = 'Price per ticket';
+  } else {
+    const activity =
+      item.activity_id == null
+        ? null
+        : ((await Activity.findOne({ _id: item.activity_id, deleted_at: null })
+            .select({ _id: 1, title: 1, image: 1, type: 1 })
+            .lean()) as LeanActivity | null);
+
+    title = activity?.title ?? 'Activity booking';
+    subtitle = activity?.type ? `${activity.type} activity` : 'Activity experience';
+    locationLabel = 'Tripwise activity';
+    imageUrl = pickImage([activity?.image]);
+    startDateTitle = 'Start';
+    endDateTitle = 'End';
+    quantityTitle = 'People';
+    quantitySingular = 'person';
+    quantityPlural = 'people';
+    pricePerUnitTitle = 'Price per person';
+  }
+
+  const rawStatus = normalizeRawStatus(item.item_status ?? booking.status) || 'PENDING';
+  const status = normalizeItemStatus(rawStatus);
+  const cancelPolicy = cancellationPolicy(item, booking);
+  const nights = type === 'hotel' ? diffNights(startDate, endDate) : null;
+  const quantity = Math.max(1, Math.round(finiteNumber(item.quantity, 1)));
+  const pricePerUnit = finiteNumber(item.price_per_unit, 0);
+  const totalAmount = finiteNumber(item.total_price, 0);
+
+  return {
+    id: item._id,
+    bookingId: item.booking_id,
+    title,
+    subtitle,
+    locationLabel,
+    serviceType: type,
+    status,
+    rawStatus,
+    statusLabel: itemStatusLabel(rawStatus, status),
+    imageUrl,
+    ticketCode: item.e_ticket_code ?? '',
+    dateLabel: formatDateRange(startDate, endDate),
+    startDate,
+    endDate,
+    startDateTitle,
+    endDateTitle,
+    startDateLabel: formatDateTime(startDate),
+    endDateLabel: formatDateTime(endDate),
+    nights,
+    nightsLabel: nights == null ? 'Not applicable' : countLabel(nights, 'night', 'nights'),
+    quantity,
+    quantityTitle,
+    quantityLabel: countLabel(quantity, quantitySingular, quantityPlural),
+    pricePerUnit,
+    pricePerUnitTitle,
+    pricePerUnitLabel: formatAmount(pricePerUnit),
+    totalAmount,
+    totalAmountLabel: formatAmount(totalAmount),
+    bookingCreatedAt: booking.created_at ?? item.created_at ?? null,
+    bookingCreatedAtLabel: formatDateTime(booking.created_at ?? item.created_at),
+    canCancel: cancelPolicy.canCancel,
+    isCancellationPending: cancelPolicy.isPending,
+    cancelDeadline: cancelPolicy.deadlineIso,
+    cancelDeadlineLabel: cancelPolicy.deadlineLabel,
+    cancellationPolicyLabel: cancellationPolicyLabel(item, booking),
   };
 }
 

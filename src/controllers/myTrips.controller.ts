@@ -1,5 +1,10 @@
 import { NextFunction, Request, Response } from 'express';
-import { cancelMyTrip, getMyTrips, MyTripsError } from '@/services/myTrips.service';
+import {
+  cancelMyTrip,
+  getMyTripDetail,
+  getMyTrips,
+  MyTripsError,
+} from '@/services/myTrips.service';
 
 export async function getMyTripsHandler(
   req: Request,
@@ -11,6 +16,22 @@ export async function getMyTripsHandler(
     const bookingId = typeof req.query.bookingId === 'string' ? req.query.bookingId : undefined;
     res.json(await getMyTrips(req.auth!.userId, status, bookingId));
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function getMyTripDetailHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(await getMyTripDetail(req.auth!.userId, req.params.bookingItemId));
+  } catch (error) {
+    if (error instanceof MyTripsError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
