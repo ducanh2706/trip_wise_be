@@ -20,6 +20,7 @@ import providerFinanceRoutes from './providerFinance.route';
 import providerApplicationsRoutes from './providerApplications.route';
 import providerListingsRoutes from './providerListings.route';
 import providerVipRoutes from './providerVip.route';
+import schedulerRoutes from './scheduler.route';
 import searchRoutes from './search.route';
 import tripsRoutes from './trips.route';
 import walletRoutes from './wallet.route';
@@ -48,6 +49,7 @@ router.use('/provider/dashboard', requireRole('PROVIDER'), providerDashboardRout
 router.use('/provider/finance', requireRole('PROVIDER'), providerFinanceRoutes);
 router.use('/provider/listings', requireRole('PROVIDER'), providerListingsRoutes);
 router.use('/provider/vip', requireRole('PROVIDER'), providerVipRoutes);
+router.use('/scheduler', requireAuth, schedulerRoutes);
 router.use('/search', searchRoutes);
 router.use('/trips', requireAuth, tripsRoutes);
 router.use('/wallet', requireAuth, walletRoutes);
