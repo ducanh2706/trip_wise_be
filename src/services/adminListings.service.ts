@@ -2,6 +2,7 @@ import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Provider } from '@/models/Provider.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { RoomInventory } from '@/models/RoomInventory.model';
+import { createNotification } from '@/services/notifications.service';
 
 type ListingReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
 
@@ -314,6 +315,37 @@ export async function reviewAdminListing(input: {
       .select({ _id: 1, hotel_id: 1, room_type: 1, capacity: 1, base_price: 1, image: 1 })
       .lean() as Promise<LeanRoom[]>,
   ]);
+
+  // Notify the provider whose listing was reviewed. Idempotent on
+  // (listingId, decision) so re-reviewing the same listing with the same
+  // outcome doesn't spam the inbox.
+  const provider = providers.get(hotel.provider_id);
+  const providerUserId = provider?.user_id || provider?._id;
+  if (providerUserId) {
+    const listingName = hotel.name?.trim() || 'Your listing';
+    if (isApproved) {
+      await createNotification({
+        id: `listing-review-${hotel._id}-APPROVED`,
+        userId: providerUserId,
+        type: 'SYSTEM',
+        title: 'Listing approved',
+        body: `"${listingName}" is now live on Tripwise.`,
+        actionRoute: '/provider_listings',
+      });
+    } else {
+      await createNotification({
+        id: `listing-review-${hotel._id}-REJECTED`,
+        userId: providerUserId,
+        type: 'SYSTEM',
+        title: 'Listing rejected',
+        body: reason
+          ? `"${listingName}" was rejected: ${reason}`
+          : `"${listingName}" was rejected by admin.`,
+        actionRoute: '/provider_listings',
+      });
+    }
+  }
+
   const availability = await roomAvailabilityMap(rooms.map((room) => room._id));
-  return serializeListing(hotel, providers.get(hotel.provider_id), rooms, availability);
+  return serializeListing(hotel, provider, rooms, availability);
 }

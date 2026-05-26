@@ -13,6 +13,7 @@ import {
   debitWallet,
   ensureWallet,
 } from '@/services/walletLedger.service';
+import { createNotification } from '@/services/notifications.service';
 
 type PayoutPeriod = 'weekly' | 'monthly';
 type PaidStatus = 'CONFIRMED' | 'PAID' | 'ACCEPTED' | 'APPROVED' | 'COMPLETED' | 'DONE';
@@ -357,6 +358,20 @@ export async function payProviderForPeriod(input: {
       },
     },
   );
+
+  // Idempotent on payoutId — a duplicate `payProvider` call (admin double-tap)
+  // would have already errored on insufficient escrow, but defense in depth.
+  const providerUserId = provider.user_id || provider._id;
+  if (providerUserId) {
+    await createNotification({
+      id: `payout-${payout._id}`,
+      userId: providerUserId,
+      type: 'SYSTEM',
+      title: 'Payout received',
+      body: `${summary.displayProviderNetAmount} was credited to your wallet for ${summary.bookingCount} booking${summary.bookingCount === 1 ? '' : 's'}.`,
+      actionRoute: '/provider_finance',
+    });
+  }
 
   return {
     ...summary,

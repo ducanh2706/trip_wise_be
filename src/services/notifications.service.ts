@@ -37,7 +37,6 @@ export interface NotificationSummary {
 
 export interface PreferencesResponse {
   push: boolean;
-  email: boolean;
   tripReminders: boolean;
   bookingUpdates: boolean;
   messages: boolean;
@@ -46,7 +45,6 @@ export interface PreferencesResponse {
 
 const PREF_KEYS: (keyof PreferencesResponse)[] = [
   'push',
-  'email',
   'tripReminders',
   'bookingUpdates',
   'messages',
@@ -55,7 +53,6 @@ const PREF_KEYS: (keyof PreferencesResponse)[] = [
 
 const DEFAULT_PREFS: PreferencesResponse = {
   push: true,
-  email: true,
   tripReminders: true,
   bookingUpdates: true,
   messages: true,
@@ -238,6 +235,12 @@ export interface CreateNotificationInput {
   title: string;
   body?: string;
   actionRoute?: string | null;
+  // Optional deterministic id. Pass when the caller needs idempotency — e.g.
+  // a scheduled reminder ("trip starts tomorrow") that may fire if the worker
+  // restarts mid-day, or a per-event notification that must not duplicate on
+  // retry. A duplicate insert raises Mongo E11000 which createNotification
+  // silently swallows.
+  id?: string;
 }
 
 // Push-suppression map: when the user toggles off the matching category, FCM
@@ -265,19 +268,28 @@ export async function createNotification(
 ): Promise<void> {
   try {
     const userId = input.userId;
-    const id = randomUUID();
+    const id = input.id ?? randomUUID();
     const now = new Date().toISOString();
 
-    await Notification.create({
-      _id: id,
-      user_id: userId,
-      type: input.type,
-      title: input.title,
-      body: input.body ?? '',
-      read: false,
-      action_route: input.actionRoute ?? null,
-      created_at: now,
-    });
+    try {
+      await Notification.create({
+        _id: id,
+        user_id: userId,
+        type: input.type,
+        title: input.title,
+        body: input.body ?? '',
+        read: false,
+        action_route: input.actionRoute ?? null,
+        created_at: now,
+      });
+    } catch (insertErr) {
+      // E11000 duplicate key — caller passed a deterministic id and this
+      // notification was already created. No-op: the inbox row exists, the
+      // user has already (or will already) be pushed. Treat any other insert
+      // error as a real failure.
+      if ((insertErr as { code?: number }).code === 11000) return;
+      throw insertErr;
+    }
 
     // Preference gates apply ONLY to FCM transport — the inbox row above is
     // always written so the user has a complete history. Two gates run:

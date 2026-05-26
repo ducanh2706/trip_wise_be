@@ -3,6 +3,7 @@ import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { Payment } from '@/models/Payment.model';
+import { Provider } from '@/models/Provider.model';
 import { Room } from '@/models/Room.model';
 import { User } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
@@ -450,6 +451,24 @@ export async function completeCheckout(input: {
     body: `${listing.hotelName} is waiting for provider confirmation.`,
     actionRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
   });
+
+  // Provider-side notification: the listing owner needs to act on this. The
+  // Provider model's `user_id` is the account that gets pushed; fall back to
+  // `_id` when that's missing (legacy providers were created with id === user
+  // id — see adminPayouts.summarizeProvider for the same fallback).
+  const provider = await Provider.findById(listing.providerId)
+    .select({ user_id: 1, business_name: 1 })
+    .lean();
+  const providerUserId = provider?.user_id || provider?._id;
+  if (providerUserId) {
+    await createNotification({
+      userId: providerUserId,
+      type: 'BOOKING',
+      title: 'New booking request',
+      body: `${listing.hotelName} has a new booking awaiting your confirmation.`,
+      actionRoute: '/order_manager',
+    });
+  }
 
   return {
     bookingId,

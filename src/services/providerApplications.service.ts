@@ -1,6 +1,7 @@
 import { Provider } from '@/models/Provider.model';
 import { User, type UserDoc } from '@/models/User.model';
 import { normalizeStoredRole } from '@/constants/authRoles';
+import { createNotification } from '@/services/notifications.service';
 
 export type ProviderApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -355,6 +356,30 @@ export async function reviewProviderApplication(
 
   if (!updated) {
     throw new ProviderApplicationError(404, 'Provider application not found');
+  }
+
+  // Idempotent on (userId, decision): re-running the same decision is a no-op
+  // for the inbox. Reviewing again with the opposite decision is allowed.
+  if (isApproved) {
+    await createNotification({
+      id: `provider-app-${userId}-APPROVED`,
+      userId,
+      type: 'SYSTEM',
+      title: 'You\'re now a provider on Tripwise',
+      body: 'Your application was approved. Add your first listing to start receiving bookings.',
+      actionRoute: '/provider_listings',
+    });
+  } else {
+    await createNotification({
+      id: `provider-app-${userId}-REJECTED`,
+      userId,
+      type: 'SYSTEM',
+      title: 'Provider application not approved',
+      body: rejectionReason
+        ? `Your application was rejected: ${rejectionReason}`
+        : 'Your provider application was rejected.',
+      actionRoute: '/profile_registration',
+    });
   }
 
   return serializeApplication(updated, user ?? undefined);
