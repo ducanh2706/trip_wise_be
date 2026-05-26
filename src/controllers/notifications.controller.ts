@@ -27,10 +27,13 @@ export async function getFeedHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const before =
+      typeof req.query.before === 'string' && req.query.before.trim()
+        ? req.query.before.trim()
+        : null;
     const rawLimit = Number(req.query.limit) || 10;
     const limit = Math.min(Math.max(1, rawLimit), 50);
-    res.json(await getFeed(req.auth!.userId, offset, limit));
+    res.json(await getFeed(req.auth!.userId, before, limit));
   } catch (err) {
     next(err);
   }

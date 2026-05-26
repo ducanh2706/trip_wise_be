@@ -6,7 +6,6 @@ import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { User, type UserDoc } from '@/models/User.model';
-import { env } from '@/config/env';
 import { createNotification } from '@/services/notifications.service';
 
 const ORDER_LIMIT = 50;
@@ -468,18 +467,21 @@ export async function updateOrderStatus(
 
   if (!updated) return null;
 
-  // Provider-triggered, but notifies the booking owner. In this no-auth
-  // prototype the inbox is pinned to env.demoUserId, so target that so the
-  // push lands on the same device the inbox shows.
-  await createNotification({
-    userId: env.demoUserId,
-    type: 'BOOKING',
-    title: `Booking ${status}`,
-    body: `Your booking status changed to ${status}.`,
-    actionRoute: '/my_trips',
-  });
-
   const item = updated as LeanBookingItem;
+
+  // Provider-triggered, notifies the booking owner — look up the Booking so
+  // the right user gets the push, not the actor (the provider).
+  const booking = await Booking.findById(item.booking_id).select({ user_id: 1 }).lean();
+  if (booking?.user_id) {
+    await createNotification({
+      userId: booking.user_id,
+      type: 'BOOKING',
+      title: `Booking ${status}`,
+      body: `Your booking status changed to ${status}.`,
+      actionRoute: '/my_trips',
+    });
+  }
+
   const context = await buildContext([item]);
   return toOrderItem(item, context);
 }

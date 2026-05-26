@@ -3,8 +3,8 @@ import { Notification } from '@/models/Notification.model';
 import { NotificationPreference } from '@/models/NotificationPreference.model';
 import { sendPushToUser } from '@/services/push.service';
 
-// No auth yet — the in-app inbox is per-user, so (like the wallet/trips
-// slices) we pin the demo user. Override via DEMO_USER_ID in .env.
+// In-app inbox + per-user preferences. Scoped to req.auth.userId from the
+// controller layer (see notifications.controller.ts).
 
 const PREVIEW_LIMIT = 50; // hard cap on a single feed page
 
@@ -24,7 +24,10 @@ export interface FeedPage {
   total: number;
   unreadCount: number;
   hasMore: boolean;
-  nextOffset: number;
+  // Cursor (= last item's created_at ISO string) for the next page. Null when
+  // the feed is exhausted. Stable under concurrent inserts — unlike skip/limit,
+  // a new notification arriving mid-scroll cannot duplicate or skip rows.
+  nextCursor: string | null;
 }
 
 export interface NotificationSummary {
@@ -131,29 +134,36 @@ async function ensureDefaultPreferences(
 
 export async function getFeed(
   userId: string,
-  offset: number,
+  before: string | null,
   limit: number,
 ): Promise<FeedPage> {
   const capped = Math.min(Math.max(1, limit), PREVIEW_LIMIT);
 
+  const findFilter: Record<string, unknown> = { user_id: userId };
+  if (before) {
+    findFilter.created_at = { $lt: before };
+  }
+
   const [total, unreadCount, rows] = await Promise.all([
     Notification.countDocuments({ user_id: userId }),
     Notification.countDocuments({ user_id: userId, read: false }),
-    Notification.find({ user_id: userId })
+    Notification.find(findFilter)
       .sort({ created_at: -1 })
-      .skip(offset)
       .limit(capped)
       .lean(),
   ]);
 
   const items = rows.map(mapNotification);
-  const nextOffset = offset + items.length;
+  // Cursor = the oldest row in this page; the client passes it back as
+  // `before` to fetch the next page.
+  const nextCursor =
+    items.length === capped ? items[items.length - 1].createdAt || null : null;
   return {
     items,
     total,
     unreadCount,
-    hasMore: nextOffset < total,
-    nextOffset,
+    hasMore: nextCursor !== null,
+    nextCursor,
   };
 }
 
@@ -230,6 +240,18 @@ export interface CreateNotificationInput {
   actionRoute?: string | null;
 }
 
+// Push-suppression map: when the user toggles off the matching category, FCM
+// delivery is skipped (the inbox row is still written — the inbox stays a
+// complete log). SYSTEM is always allowed: it covers transactional confirms
+// (top-up, withdraw, VIP upgrade) that the user shouldn't be able to mute.
+const TYPE_TO_PREF: Record<string, keyof PreferencesResponse | null> = {
+  TRIP: 'tripReminders',
+  BOOKING: 'bookingUpdates',
+  MESSAGE: 'messages',
+  PROMO: 'promotions',
+  SYSTEM: null,
+};
+
 /**
  * Shared entry point for runtime-generated notifications. Inserts the in-app
  * inbox row AND (preference-gated, best-effort) fires an FCM push.
@@ -257,10 +279,17 @@ export async function createNotification(
       created_at: now,
     });
 
-    // Preference gate: push transport is suppressed when the user turned
-    // "Push Notifications" off, but the inbox row above is always kept.
+    // Preference gates apply ONLY to FCM transport — the inbox row above is
+    // always written so the user has a complete history. Two gates run:
+    //   1. `push` channel — global off-switch for banners.
+    //   2. category flag (TRIP/BOOKING/MESSAGE/PROMO) — per-type opt-out.
+    // SYSTEM bypasses the category gate (transactional confirms).
     const prefs = await ensureDefaultPreferences(userId);
     if (!prefs.push) return;
+    const categoryFlag = TYPE_TO_PREF[input.type];
+    if (categoryFlag !== null && categoryFlag !== undefined && !prefs[categoryFlag]) {
+      return;
+    }
 
     await sendPushToUser(userId, {
       type: input.type,

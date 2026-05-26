@@ -2,7 +2,7 @@ import { DeviceToken } from '@/models/DeviceToken.model';
 import { NotificationError } from '@/services/notifications.service';
 
 // Reuses NotificationError → 4xx (same controller error-mapping pattern as
-// the notifications slice). Scoped to env.demoUserId (no auth yet).
+// the notifications slice). Scoped to req.auth.userId from the controller.
 
 export async function registerDeviceToken(
   userId: string,
