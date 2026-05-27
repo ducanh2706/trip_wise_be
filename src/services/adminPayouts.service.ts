@@ -1,9 +1,7 @@
 ﻿import { randomUUID } from 'crypto';
-import { Booking } from '@/models/Booking.model';
 import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
-import { PayoutRequest, type PayoutRequestDoc } from '@/models/PayoutRequest.model';
+import { PayoutRequest } from '@/models/PayoutRequest.model';
 import { Provider, type ProviderDoc } from '@/models/Provider.model';
-import { User, type UserDoc } from '@/models/User.model';
 import { Wallet } from '@/models/Wallet.model';
 import { env } from '@/config/env';
 import {
@@ -15,10 +13,8 @@ import {
 } from '@/services/walletLedger.service';
 import { createNotification } from '@/services/notifications.service';
 
-type PayoutPeriod = 'weekly' | 'monthly';
 type PaidStatus = 'CONFIRMED' | 'PAID' | 'ACCEPTED' | 'APPROVED' | 'COMPLETED' | 'DONE';
 type LeanProvider = Pick<ProviderDoc, '_id' | 'user_id' | 'business_name'>;
-type LeanUser = Pick<UserDoc, '_id' | 'full_name' | 'email' | 'role'>;
 type LeanPayoutItem = BookingItemDoc & {
   gross_amount?: number | null;
   commission_amount?: number | null;
@@ -52,7 +48,7 @@ export interface AdminProviderPayoutSummary {
 }
 
 export interface AdminProviderPayoutsResponse {
-  period: PayoutPeriod;
+  period: 'manual';
   periodStart: string;
   periodEnd: string;
   commissionRate: number;
@@ -79,16 +75,6 @@ export interface AdminProviderPayoutPaidResponse extends AdminProviderPayoutSumm
   paidAt: string;
 }
 
-export interface AdminTestEscrowResponse {
-  providerId: string;
-  providerUserId: string;
-  providerName: string;
-  grossAmount: number;
-  commissionAmount: number;
-  providerNetAmount: number;
-  bookingItemId: string;
-}
-
 export class AdminPayoutError extends Error {
   constructor(
     public status: number,
@@ -96,29 +82,6 @@ export class AdminPayoutError extends Error {
   ) {
     super(message);
   }
-}
-
-function normalizePeriod(value: unknown): PayoutPeriod {
-  return typeof value === 'string' && value.trim().toLowerCase() === 'weekly'
-    ? 'weekly'
-    : 'monthly';
-}
-
-function periodRange(period: PayoutPeriod, anchor = new Date()) {
-  if (period === 'weekly') {
-    const start = new Date(anchor);
-    start.setHours(0, 0, 0, 0);
-    const day = start.getDay();
-    const distanceFromMonday = (day + 6) % 7;
-    start.setDate(start.getDate() - distanceFromMonday);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    return { start, end };
-  }
-
-  const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
-  return { start, end };
 }
 
 function formatCurrency(value: number): string {
@@ -148,33 +111,16 @@ function amountParts(item: LeanPayoutItem) {
   };
 }
 
-async function eligibleItems(providerId: string | undefined, period: PayoutPeriod) {
-  const { start, end } = periodRange(period);
+async function eligibleItems(providerId?: string) {
   const baseFilter: Record<string, unknown> = {
     item_status: { $in: PAYABLE_STATUSES },
     escrow_status: 'HELD',
   };
   if (providerId) baseFilter.provider_id = providerId;
 
-  const periodFilter: Record<string, unknown> = {
-    ...baseFilter,
-    created_at: {
-      $gte: start.toISOString(),
-      $lt: end.toISOString(),
-    },
-  };
-
-  let items = (await BookingItem.find(periodFilter)
+  return (await BookingItem.find(baseFilter)
     .sort({ created_at: 1, _id: 1 })
     .lean()) as LeanPayoutItem[];
-
-  if (items.length === 0) {
-    items = (await BookingItem.find(baseFilter)
-      .sort({ created_at: 1, _id: 1 })
-      .lean()) as LeanPayoutItem[];
-  }
-
-  return { start, end, items };
 }
 
 async function providersMap(providerIds: string[]): Promise<Map<string, LeanProvider>> {
@@ -213,27 +159,8 @@ function summarizeProvider(
   };
 }
 
-async function ensureAdminEscrowBalance(requiredGrossAmount: number): Promise<void> {
-  await ensureWallet(env.adminWalletUserId);
-  const wallet = await Wallet.findOne({ user_id: env.adminWalletUserId }).lean();
-  const currentBalance = wallet?.balance ?? 0;
-  const required = Math.round(requiredGrossAmount);
-  if (required <= currentBalance) return;
-
-  await creditWallet({
-    userId: env.adminWalletUserId,
-    amount: required - currentBalance,
-    type: 'ESCROW_RECONCILE_IN',
-    status: 'SUCCESS',
-    note: 'Reconciled admin wallet to cover held booking escrow',
-  });
-}
-
-export async function listAdminProviderPayouts(
-  periodRaw: unknown,
-): Promise<AdminProviderPayoutsResponse> {
-  const period = normalizePeriod(periodRaw);
-  const { start, end, items } = await eligibleItems(undefined, period);
+export async function listAdminProviderPayouts(): Promise<AdminProviderPayoutsResponse> {
+  const items = await eligibleItems();
   await ensureWallet(env.adminWalletUserId);
 
   const providerIds = Array.from(new Set(items.map((item) => item.provider_id)));
@@ -260,13 +187,12 @@ export async function listAdminProviderPayouts(
     { bookingCount: 0, grossAmount: 0, commissionAmount: 0, providerNetAmount: 0 },
   );
 
-  await ensureAdminEscrowBalance(totals.grossAmount);
   const adminWallet = await Wallet.findOne({ user_id: env.adminWalletUserId }).lean();
 
   return {
-    period,
-    periodStart: start.toISOString(),
-    periodEnd: end.toISOString(),
+    period: 'manual',
+    periodStart: '',
+    periodEnd: '',
     commissionRate: PLATFORM_COMMISSION_RATE,
     commissionLabel: `${Math.round(PLATFORM_COMMISSION_RATE * 100)}%`,
     adminWallet: {
@@ -287,12 +213,10 @@ export async function listAdminProviderPayouts(
 export async function payProviderForPeriod(input: {
   actorId: string;
   providerId: string;
-  period?: unknown;
 }): Promise<AdminProviderPayoutPaidResponse> {
-  const period = normalizePeriod(input.period);
-  const { start, end, items } = await eligibleItems(input.providerId, period);
+  const items = await eligibleItems(input.providerId);
   if (items.length === 0) {
-    throw new AdminPayoutError(400, 'No held bookings found for this provider and period');
+    throw new AdminPayoutError(400, 'No held bookings found for this provider');
   }
 
   const providersById = await providersMap([input.providerId]);
@@ -304,7 +228,6 @@ export async function payProviderForPeriod(input: {
     throw new AdminPayoutError(400, 'Provider payout amount must be greater than zero');
   }
 
-  await ensureAdminEscrowBalance(summary.grossAmount);
   const adminWallet = await Wallet.findOne({ user_id: env.adminWalletUserId }).lean();
   if ((adminWallet?.balance ?? 0) < summary.providerNetAmount) {
     throw new AdminPayoutError(400, 'Admin wallet does not have enough escrow balance');
@@ -324,9 +247,9 @@ export async function payProviderForPeriod(input: {
     scheduled_for: paidAt,
     paid_at: paidAt,
     paid_by: input.actorId,
-    period,
-    period_start: start.toISOString(),
-    period_end: end.toISOString(),
+    period: 'manual',
+    period_start: null,
+    period_end: null,
     booking_item_ids: items.map((item) => item._id),
     note: 'Admin released escrow payout to provider wallet',
   });
@@ -377,110 +300,5 @@ export async function payProviderForPeriod(input: {
     ...summary,
     payoutId: payout._id,
     paidAt,
-  };
-}
-
-export async function createTestEscrowForProvider(input: {
-  email: unknown;
-  amount: unknown;
-}): Promise<AdminTestEscrowResponse> {
-  const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
-  const amount = Math.round(Number(input.amount ?? 100));
-  if (!email.includes('@')) throw new AdminPayoutError(400, 'Provider email is required');
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new AdminPayoutError(400, 'Amount must be greater than zero');
-  }
-
-  const user = (await User.findOne({
-    $or: [{ email_normalized: email }, { email }],
-  }).lean()) as LeanUser | null;
-  if (!user) throw new AdminPayoutError(404, `User not found for ${email}`);
-
-  const userId = user._id;
-  const providerName = user.full_name?.trim() || user.email || 'Tripwise Provider';
-  const now = new Date().toISOString();
-  const provider = await Provider.findOneAndUpdate(
-    { $or: [{ _id: userId }, { user_id: userId }] },
-    {
-      $set: {
-        user_id: userId,
-        business_name: providerName,
-        status: 'APPROVED',
-        updated_at: now,
-      },
-      $setOnInsert: {
-        _id: userId,
-        created_at: now,
-      },
-    },
-    { new: true, upsert: true },
-  ).lean();
-
-  await User.updateOne({ _id: userId }, { $set: { role: 'PROVIDER', updated_at: now } });
-  await ensureWallet(userId);
-
-  const providerId = provider?._id ?? userId;
-  const settlement = calculateCommission(amount);
-  const bookingId = randomUUID();
-  const bookingItemId = randomUUID();
-
-  await Booking.create({
-    _id: bookingId,
-    user_id: env.demoUserId,
-    total_price: amount,
-    total_amount: amount,
-    discount_amount: 0,
-    final_amount: amount,
-    currency: 'USD',
-    status: 'PENDING',
-    created_at: now,
-    updated_at: now,
-    deleted_at: null,
-  });
-
-  await BookingItem.create({
-    _id: bookingItemId,
-    booking_id: bookingId,
-    provider_id: providerId,
-    room_id: null,
-    flight_id: null,
-    activity_id: null,
-    start_date: now.slice(0, 10),
-    end_date: now.slice(0, 10),
-    quantity: 1,
-    price_per_unit: amount,
-    total_price: amount,
-    gross_amount: settlement.grossAmount,
-    commission_rate: PLATFORM_COMMISSION_RATE,
-    commission_amount: settlement.commissionAmount,
-    provider_net_amount: settlement.providerNetAmount,
-    escrow_status: 'HELD',
-    payout_request_id: null,
-    paid_to_provider_at: null,
-    item_status: 'PENDING',
-    e_ticket_code: `TEST-${Date.now()}`,
-    created_at: now,
-    updated_at: now,
-  });
-
-  await creditWallet({
-    userId: env.adminWalletUserId,
-    amount,
-    type: 'BOOKING_ESCROW_IN',
-    status: 'HELD',
-    bookingId,
-    bookingItemId,
-    providerId,
-    note: `Test escrow for ${email}`,
-  });
-
-  return {
-    providerId,
-    providerUserId: userId,
-    providerName,
-    grossAmount: settlement.grossAmount,
-    commissionAmount: settlement.commissionAmount,
-    providerNetAmount: settlement.providerNetAmount,
-    bookingItemId,
   };
 }

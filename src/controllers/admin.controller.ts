@@ -1,7 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import {
   AdminPayoutError,
-  createTestEscrowForProvider,
   listAdminProviderPayouts,
   payProviderForPeriod,
 } from '@/services/adminPayouts.service';
@@ -98,12 +97,12 @@ export async function reviewProviderApplicationHandler(
 }
 
 export async function listAdminProviderPayoutsHandler(
-  req: Request,
+  _req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    res.json(await listAdminProviderPayouts(req.query.period));
+    res.json(await listAdminProviderPayouts());
   } catch (error) {
     handleAdminError(error, res, next);
   }
@@ -119,24 +118,6 @@ export async function payProviderForPeriodHandler(
       await payProviderForPeriod({
         actorId: req.auth!.userId,
         providerId: firstString(req.params.providerId),
-        period: req.body?.period ?? req.query.period,
-      }),
-    );
-  } catch (error) {
-    handleAdminError(error, res, next);
-  }
-}
-
-export async function createTestEscrowForProviderHandler(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  try {
-    res.status(201).json(
-      await createTestEscrowForProvider({
-        email: req.body?.email ?? 'thang3@gmail.com',
-        amount: req.body?.amount ?? 100,
       }),
     );
   } catch (error) {
