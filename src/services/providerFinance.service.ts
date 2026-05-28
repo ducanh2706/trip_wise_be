@@ -525,7 +525,7 @@ async function payoutRequests(providerId: string): Promise<PayoutRequestDoc[]> {
 
 function committedPayoutTotal(requests: PayoutRequestDoc[]): number {
   return requests.reduce((sum, request) => {
-    return ['PENDING', 'SCHEDULED'].includes((request.status ?? '').toUpperCase())
+    return ['PENDING', 'SCHEDULED', 'APPROVED'].includes((request.status ?? '').toUpperCase())
       ? sum + request.amount
       : sum;
   }, 0);
@@ -570,7 +570,7 @@ export async function getProviderFinance(input: {
   });
   const limit = Math.min(Math.max(input.limit ?? DEFAULT_TX_LIMIT, 1), 50);
   const pendingRequestsTotal = requests.reduce((sum, request) => {
-    return ['PENDING', 'SCHEDULED'].includes((request.status ?? '').toUpperCase())
+    return ['PENDING', 'SCHEDULED', 'APPROVED'].includes((request.status ?? '').toUpperCase())
       ? sum + request.amount
       : sum;
   }, 0);

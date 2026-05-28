@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from 'express';
 import {
   AdminPayoutError,
   listAdminProviderPayouts,
-  payProviderForPeriod,
+  reviewProviderPayoutRequests,
 } from '@/services/adminPayouts.service';
 import {
   ProviderApplicationError,
@@ -108,16 +108,17 @@ export async function listAdminProviderPayoutsHandler(
   }
 }
 
-export async function payProviderForPeriodHandler(
+export async function reviewProviderPayoutRequestsHandler(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
     res.json(
-      await payProviderForPeriod({
+      await reviewProviderPayoutRequests({
         actorId: req.auth!.userId,
         providerId: firstString(req.params.providerId),
+        decision: req.body?.decision,
       }),
     );
   } catch (error) {

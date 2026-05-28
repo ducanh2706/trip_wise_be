@@ -4,7 +4,7 @@ import {
   listAdminListingsHandler,
   listAdminProviderPayoutsHandler,
   listProviderApplicationsHandler,
-  payProviderForPeriodHandler,
+  reviewProviderPayoutRequestsHandler,
   reviewCancellationRequestHandler,
   reviewAdminListingHandler,
   reviewProviderApplicationHandler,
@@ -17,7 +17,7 @@ router.patch('/provider-applications/:userId/review', reviewProviderApplicationH
 router.get('/listings', listAdminListingsHandler);
 router.patch('/listings/:listingId/review', reviewAdminListingHandler);
 router.get('/provider-payouts', listAdminProviderPayoutsHandler);
-router.post('/provider-payouts/:providerId/pay', payProviderForPeriodHandler);
+router.patch('/provider-payouts/:providerId/review', reviewProviderPayoutRequestsHandler);
 router.get('/cancellations', listAdminCancellationRequestsHandler);
 router.patch('/cancellations/:bookingItemId/review', reviewCancellationRequestHandler);
 
