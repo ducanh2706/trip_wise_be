@@ -8,6 +8,8 @@ import {
   getHotelReviewSummary,
   ReviewResponse,
 } from '@/services/reviews.service';
+import { env } from '@/config/env';
+import { deleteCacheKey, getCacheJson, setCacheJson } from '@/config/redis';
 
 export interface HotelDetailResponse {
   id: number;
@@ -63,6 +65,9 @@ const CANCELLABLE_ITEM_STATUSES = new Set([
 const SHORT_NOTICE_DAYS = 7;
 const SHORT_NOTICE_CANCEL_WINDOW_DAYS = 1;
 const STANDARD_CANCEL_WINDOW_DAYS = 7;
+const HOTEL_DETAIL_CACHE_KEY_VERSION = 1;
+
+type HotelDetailCachePayload = Omit<HotelDetailResponse, 'existingBooking'>;
 
 function normalizeStatus(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -186,19 +191,45 @@ export async function getHotelDetail(
   id: number,
   userId?: string,
 ): Promise<HotelDetailResponse | null> {
+  const cacheKey = hotelDetailCacheKey(id);
+  const cached = await getCacheJson<HotelDetailCachePayload>(cacheKey);
+  const baseDetail = cached ?? (await buildHotelDetailCachePayload(id));
+  if (!baseDetail) return null;
+
+  if (!cached) {
+    await setCacheJson(cacheKey, baseDetail, env.redisHotelDetailTtlSeconds);
+  }
+
+  const existingBooking = await resolveExistingBookingForHotel(userId, id);
+  return {
+    ...baseDetail,
+    existingBooking,
+  };
+}
+
+export async function invalidateHotelDetailCache(hotelId: number): Promise<void> {
+  if (!Number.isInteger(hotelId) || hotelId <= 0) return;
+  await deleteCacheKey(hotelDetailCacheKey(hotelId));
+}
+
+function hotelDetailCacheKey(hotelId: number): string {
+  return `hotel:detail:v${HOTEL_DETAIL_CACHE_KEY_VERSION}:${hotelId}`;
+}
+
+async function buildHotelDetailCachePayload(
+  id: number,
+): Promise<HotelDetailCachePayload | null> {
   const hotel = await Hotel.findOne({ _id: id, deleted_at: null }).lean();
   if (!hotel) return null;
 
-  const [cheapestRoom, provider, locationPath, reviewSummary, existingBooking] =
-    await Promise.all([
-      Room.findOne({ hotel_id: id, deleted_at: null })
-        .sort({ base_price: 1 })
-        .lean(),
-      Provider.findById(hotel.provider_id).lean(),
-      buildLocationPath(hotel.location_id),
-      getHotelReviewSummary(id, 2),
-      resolveExistingBookingForHotel(userId, id),
-    ]);
+  const [cheapestRoom, provider, locationPath, reviewSummary] = await Promise.all([
+    Room.findOne({ hotel_id: id, deleted_at: null })
+      .sort({ base_price: 1 })
+      .lean(),
+    Provider.findById(hotel.provider_id).lean(),
+    buildLocationPath(hotel.location_id),
+    getHotelReviewSummary(id, 2),
+  ]);
 
   return {
     id: hotel._id,
@@ -207,8 +238,6 @@ export async function getHotelDetail(
     address: hotel.address,
     locationPath,
     starRating: hotel.star_rating,
-    // Real average from the reviews collection; fall back to the
-    // star_rating proxy only when a hotel has no reviews yet.
     rating: reviewSummary.count > 0 ? reviewSummary.average : hotel.star_rating,
     reviewCount: reviewSummary.count,
     latitude: hotel.latitude ?? null,
@@ -228,6 +257,5 @@ export async function getHotelDetail(
     isFavoritedByMe: false,
     googleMapUrl: hotel.google_map_url ?? null,
     reviewsPreview: reviewSummary.preview,
-    existingBooking,
   };
 }

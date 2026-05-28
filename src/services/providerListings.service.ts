@@ -5,6 +5,7 @@ import { Location } from '@/models/Location.model';
 import { Payment } from '@/models/Payment.model';
 import { Review } from '@/models/Review.model';
 import { Room } from '@/models/Room.model';
+import { invalidateHotelDetailCache } from '@/services/hotels.service';
 
 type ListingStatus = 'active' | 'inactive' | 'pending';
 type AnalyticsPeriod = '7d' | '30d' | '90d' | '1y';
@@ -423,6 +424,7 @@ export async function createProviderListing(
     deleted_at: null,
   }));
   await Room.insertMany(roomDocs);
+  await invalidateHotelDetailCache(hotelId);
 
   return getProviderListingDetail(providerId, hotelId);
 }
@@ -510,6 +512,7 @@ export async function updateProviderListing(
       await room.save();
     }
   }
+  await invalidateHotelDetailCache(id);
 
   return getProviderListingDetail(providerId, id);
 }
@@ -536,6 +539,7 @@ export async function deleteProviderListing(
   );
   if (res.matchedCount === 0) throw new ProviderListingError(404, 'Listing not found');
   await Room.updateMany({ hotel_id: id, deleted_at: null }, { $set: { deleted_at: now } });
+  await invalidateHotelDetailCache(id);
   return { ok: true };
 }
 

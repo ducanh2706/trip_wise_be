@@ -2,6 +2,7 @@ import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Provider } from '@/models/Provider.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { RoomInventory } from '@/models/RoomInventory.model';
+import { invalidateHotelDetailCache } from '@/services/hotels.service';
 import { createNotification } from '@/services/notifications.service';
 
 type ListingReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
@@ -309,6 +310,7 @@ export async function reviewAdminListing(input: {
   ).lean()) as LeanHotel | null;
 
   if (!hotel) throw new AdminListingError(404, 'Listing not found');
+  await invalidateHotelDetailCache(hotel._id);
   const [providers, rooms] = await Promise.all([
     providerMap([hotel.provider_id]),
     Room.find({ hotel_id: hotel._id, deleted_at: null })

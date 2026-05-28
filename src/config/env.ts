@@ -102,4 +102,9 @@ export const env = {
   payosReturnUrl: process.env.PAYOS_RETURN_URL?.trim() ?? 'tripwise://payos/return',
   payosCancelUrl: process.env.PAYOS_CANCEL_URL?.trim() ?? 'tripwise://payos/cancel',
   payosQrExpireSeconds: Math.max(60, Number(process.env.PAYOS_QR_EXPIRE_SECONDS ?? 300) || 300),
+  redisUrl: process.env.REDIS_URL?.trim() ?? '',
+  redisHotelDetailTtlSeconds: Math.max(
+    30,
+    Number(process.env.REDIS_HOTEL_DETAIL_TTL_SECONDS ?? 300) || 300,
+  ),
 };
