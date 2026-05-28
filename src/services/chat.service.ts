@@ -3,8 +3,13 @@ import { Activity } from '@/models/Activity.model';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
+import { Location } from '@/models/Location.model';
+import { Provider } from '@/models/Provider.model';
+import { ProfileVerification } from '@/models/ProfileVerification.model';
 import { Review } from '@/models/Review.model';
 import { Room } from '@/models/Room.model';
+import { Trip } from '@/models/Trip.model';
+import { Wallet } from '@/models/Wallet.model';
 
 type ChatIntent =
   | 'greeting'
@@ -20,7 +25,10 @@ type ChatIntent =
   | 'voucher'
   | 'wallet'
   | 'review'
+  | 'identity_verification'
   | 'provider_support'
+  | 'app_layout'
+  | 'app_feature'
   | 'contact_support'
   | 'thanks'
   | 'unknown';
@@ -36,7 +44,18 @@ interface ChatEntities {
 }
 
 interface ChatContextItem {
-  type: 'hotel' | 'tour' | 'booking' | 'reviewSummary' | 'policy';
+  type:
+    | 'hotel'
+    | 'tour'
+    | 'booking'
+    | 'reviewSummary'
+    | 'policy'
+    | 'wallet'
+    | 'trip'
+    | 'provider'
+    | 'verification'
+    | 'location'
+    | 'app';
   title: string;
   details: Record<string, unknown>;
 }
@@ -95,8 +114,61 @@ const rules: ChatRule[] = [
   { intent: 'wallet', keywords: ['wallet', 'balance', 'points', 'reward points'] },
   { intent: 'review', keywords: ['review', 'rating', 'feedback'] },
   {
+    intent: 'identity_verification',
+    keywords: [
+      'passport',
+      'upload passport',
+      'up passport',
+      'verification',
+      'identity',
+      'document',
+      'id card',
+      'verify profile',
+      'xac minh',
+      'xác minh',
+      'giay to',
+      'giấy tờ',
+      'ho chieu',
+      'hộ chiếu',
+      'can cuoc',
+      'căn cước',
+      'cccd',
+      'tai len',
+      'tải lên',
+    ],
+  },
+  {
     intent: 'provider_support',
     keywords: ['provider', 'host', 'listing', 'manage orders', 'payout'],
+  },
+  {
+    intent: 'app_layout',
+    keywords: [
+      'layout',
+      'navigation',
+      'tab',
+      'bottom bar',
+      'menu',
+      'screen',
+      'where is',
+      'go to',
+      'open',
+    ],
+  },
+  {
+    intent: 'app_feature',
+    keywords: [
+      'feature',
+      'function',
+      'how to use',
+      'what can i do',
+      'tripwise app',
+      'planner',
+      'business app',
+      'vip',
+      'finance',
+      'order manager',
+    ],
   },
   {
     intent: 'contact_support',
@@ -116,6 +188,62 @@ const destinationAliases = [
   'Ho Chi Minh City',
   'Hue',
   'Ha Long',
+];
+
+const APP_LAYOUT_CONTEXT: ChatContextItem[] = [
+  {
+    type: 'app',
+    title: 'Planner layout',
+    details: {
+      audience: 'traveler/planner',
+      topBar: 'Planner pages use a compact top bar with back/profile actions.',
+      bottomTabs: ['Home', 'My Trips', 'Planner', 'Wallet', 'Profile'],
+      mainScreens: {
+        Home: 'Search destinations, dates, hotels, tours, flights, and recommendations.',
+        MyTrips: 'View bookings, booking detail, cancel bookings, contact support.',
+        Planner: 'Create trips, choose dates/destination, add activities, edit activity time.',
+        Wallet: 'View balance, loyalty points, cards, and wallet transactions.',
+        Profile:
+          'Manage account, support, notifications, provider registration, and identity verification.',
+      },
+      actionGuides: {
+        uploadPassport:
+          'Open Profile from the bottom tab, find Verification, tap Continue/Verify Documents, choose Passport, then tap Tap to upload and select an image.',
+        removePassport:
+          'Open Profile > Verification > Passport, then tap the uploaded passport image/delete control to remove it.',
+      },
+    },
+  },
+  {
+    type: 'app',
+    title: 'Provider layout',
+    details: {
+      audience: 'provider/business',
+      topBar: 'Provider pages use TRIP WISE BUSINESS with notification/profile actions.',
+      bottomTabs: ['Dashboard', 'Listings', 'Orders', 'VIP', 'Finance'],
+      mainScreens: {
+        Dashboard: 'Summary metrics, recent activity, and business status.',
+        Listings: 'Create, edit, and manage provider listings.',
+        Orders: 'Review pending/confirmed/cancelled orders and chat with guests.',
+        VIP: 'Upgrade Elite plan and select or remove listing promotions.',
+        Finance: 'Wallet payout balance, lifetime earnings, fees, transactions, payout schedule.',
+      },
+    },
+  },
+  {
+    type: 'app',
+    title: 'Admin layout',
+    details: {
+      audience: 'admin',
+      mainScreens: [
+        'Provider approvals',
+        'Listing approvals',
+        'Refund/cancellation approvals',
+        'Provider payouts',
+      ],
+      note: 'Admin screens are for review and operational approvals, not traveler booking.',
+    },
+  },
 ];
 
 function normalize(text: string): string {
@@ -160,9 +288,53 @@ function extractEntities(message: string): ChatEntities {
   return { destination, bookingId };
 }
 
+async function loadLocationSuggestions(message: string): Promise<ChatContextItem[]> {
+  const normalized = normalize(message);
+  const tokens = normalized.split(/\s+/).filter((token) => token.length >= 2);
+  if (tokens.length === 0) return [];
+
+  const locations = await Location.find({})
+    .select({ _id: 1, name: 1, parent_id: 1, type: 1 })
+    .sort({ _id: -1 })
+    .limit(500)
+    .lean();
+
+  const locationMap = new Map(locations.map((location) => [location._id, location]));
+  const labelOf = (location: (typeof locations)[number]) => {
+    const trail: string[] = [];
+    let current: typeof location | undefined = location;
+    const seen = new Set<number>();
+    while (current && !seen.has(current._id) && trail.length < 6) {
+      seen.add(current._id);
+      trail.push(current.name);
+      current =
+        typeof current.parent_id === 'number' ? locationMap.get(current.parent_id) : undefined;
+    }
+    return trail.join(', ');
+  };
+
+  return locations
+    .map((location) => ({ location, label: labelOf(location) }))
+    .filter(({ label }) => {
+      const folded = normalize(label);
+      return tokens.every((token) => folded.includes(token));
+    })
+    .slice(0, 5)
+    .map(({ location, label }) => ({
+      type: 'location' as const,
+      title: location.name,
+      details: {
+        id: location._id,
+        type: location.type ?? null,
+        path: label,
+      },
+    }));
+}
+
 async function loadTravelContext(
   intent: ChatIntent,
   entities: ChatEntities,
+  message: string,
   userId?: string,
 ): Promise<ChatContextItem[]> {
   const items: ChatContextItem[] = [];
@@ -339,6 +511,106 @@ async function loadTravelContext(
     });
   }
 
+  if (intent === 'wallet' && userId) {
+    const wallet = await Wallet.findOne({ user_id: userId })
+      .select({ balance: 1, loyalty_points: 1, updated_at: 1 })
+      .lean();
+    if (wallet) {
+      items.push({
+        type: 'wallet',
+        title: 'Your Tripwise wallet',
+        details: {
+          balance: formatVnd(wallet.balance),
+          loyaltyPoints: wallet.loyalty_points ?? 0,
+          updatedAt: wallet.updated_at ?? null,
+        },
+      });
+    }
+  }
+
+  if (intent === 'ask_itinerary' && userId) {
+    const trips = await Trip.find({ user_id: userId })
+      .select({ _id: 1, title: 1, destination: 1, status: 1, start_date: 1, end_date: 1 })
+      .sort({ created_at: -1, _id: -1 })
+      .limit(3)
+      .lean();
+    items.push(
+      ...trips.map((trip) => ({
+        type: 'trip' as const,
+        title: trip.title,
+        details: {
+          id: trip._id,
+          destination: trip.destination ?? null,
+          status: trip.status ?? null,
+          startDate: trip.start_date ?? null,
+          endDate: trip.end_date ?? null,
+        },
+      })),
+    );
+  }
+
+  if (intent === 'provider_support' && userId) {
+    const provider = await Provider.findOne({ $or: [{ user_id: userId }, { _id: userId }] })
+      .select({ _id: 1, business_name: 1, status: 1, vip_plan: 1, vip_promotions: 1 })
+      .lean();
+    if (provider) {
+      const providerData = provider as Record<string, unknown>;
+      items.push({
+        type: 'provider',
+        title: provider.business_name,
+        details: {
+          id: provider._id,
+          status: provider.status ?? null,
+          vipPlan: providerData.vip_plan ?? null,
+          selectedPromotions: Array.isArray(providerData.vip_promotions)
+            ? providerData.vip_promotions.length
+            : 0,
+        },
+      });
+    }
+  }
+
+  if (intent === 'identity_verification') {
+    const verification = userId
+      ? await ProfileVerification.findById(userId)
+          .select({
+            passport_uploaded: 1,
+            passport_note: 1,
+            address_uploaded: 1,
+            address_note: 1,
+            updated_at: 1,
+          })
+          .lean()
+      : null;
+    items.push({
+      type: 'verification',
+      title: 'Profile verification',
+      details: {
+        route: '/profile_registration -> /profile_verification',
+        bottomTab: 'Profile',
+        section: 'Verification',
+        passportCard: 'Passport / Government document',
+        uploadAction: 'Tap to upload',
+        supportedFiles: 'JPG, PNG, WEBP image files',
+        currentPassportStatus: verification?.passport_uploaded ? 'Submitted' : 'Pending',
+        currentPassportNote: verification?.passport_note ?? 'Not submitted',
+        currentAddressStatus: verification?.address_uploaded ? 'Submitted' : 'Pending',
+        currentAddressNote: verification?.address_note ?? 'Not submitted',
+      },
+    });
+  }
+
+  if (intent === 'suggest_destination') {
+    items.push(...(await loadLocationSuggestions(`${entities.destination ?? ''} ${message}`)));
+    if (items.filter((item) => item.type === 'location').length === 0) {
+      items.push(...(await loadLocationSuggestions(message)));
+    }
+  }
+
+  if (intent === 'app_layout' || intent === 'app_feature') {
+    items.push(...APP_LAYOUT_CONTEXT);
+  }
+
   return items.slice(0, 10);
 }
 
@@ -353,7 +625,36 @@ function templateReply(intent: ChatIntent, context: ChatContextItem[]): string {
     return 'You can send a message here or open Profile > Help Center to find the best support channel.';
   }
   if (intent === 'provider_support') {
-    return 'If you are a provider, use Provider Dashboard to manage listings, Order Manager to handle bookings, and Finance/Payout to track revenue.';
+    const provider = context.find((item) => item.type === 'provider');
+    const status = provider ? ` Your provider profile is ${provider.details.status ?? 'active'}.` : '';
+    return `If you are a provider, use Provider Dashboard to review metrics, Listings to manage inventory, Orders to handle bookings and guest chat, VIP for promotions, and Finance for wallet/payout balance.${status}`;
+  }
+  if (intent === 'identity_verification') {
+    const verification = context.find((item) => item.type === 'verification');
+    const status = verification?.details.currentPassportStatus;
+    return [
+      'Để upload passport trong app Tripwise:',
+      '1. Nhấn tab Profile ở thanh dưới cùng.',
+      '2. Kéo tới mục Verification.',
+      '3. Nhấn Continue hoặc Verify Documents.',
+      '4. Ở thẻ Passport / Government document, nhấn Tap to upload.',
+      '5. Chọn ảnh passport rõ nét rồi chờ app báo uploaded successfully.',
+      status ? `Trạng thái passport hiện tại của bạn: ${status}.` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (intent === 'app_layout' || intent === 'app_feature') {
+    return APP_LAYOUT_CONTEXT.map((item) => {
+      const details = item.details;
+      if (Array.isArray(details.bottomTabs)) {
+        return `${item.title}: bottom tabs are ${(details.bottomTabs as string[]).join(', ')}.`;
+      }
+      if (Array.isArray(details.mainScreens)) {
+        return `${item.title}: ${(details.mainScreens as string[]).join(', ')}.`;
+      }
+      return item.title;
+    }).join('\n');
   }
 
   const tours = context.filter((item) => item.type === 'tour');
@@ -404,7 +705,11 @@ function templateReply(intent: ChatIntent, context: ChatContextItem[]): string {
     return 'You can enter a discount code on checkout if the service supports it. Some vouchers depend on travel dates, order value, or service type.';
   }
   if (intent === 'wallet') {
-    return 'Open Wallet to view your balance, points, and transaction history.';
+    const wallet = context.find((item) => item.type === 'wallet');
+    if (wallet) {
+      return `Your wallet balance is ${wallet.details.balance}, with ${wallet.details.loyaltyPoints} loyalty points. Open Wallet to view cards and transaction history.`;
+    }
+    return 'Open Wallet to view your balance, points, cards, and transaction history.';
   }
   if (intent === 'review') {
     const reviews = context.filter((item) => item.type === 'reviewSummary');
@@ -429,7 +734,7 @@ async function callLlm(input: {
 
   const prompt = JSON.stringify({
     instruction:
-      'You are the Tripwise travel assistant. Use only the CONTEXT and draft answer. Do not invent prices, booking statuses, policies, or unavailable data. Reply concisely in English.',
+      'You are the Tripwise travel assistant. Use only the CONTEXT and draft answer. Do not invent prices, booking statuses, policies, navigation, or unavailable data. Reply concisely in the same language as the user when obvious; otherwise use English.',
     question: input.message,
     intent: input.intent,
     context: input.context,
@@ -473,7 +778,7 @@ export async function answerChat(input: {
   const message = input.message.trim();
   const intent = detectIntent(message);
   const entities = extractEntities(message);
-  const context = await loadTravelContext(intent, entities, input.userId);
+  const context = await loadTravelContext(intent, entities, message, input.userId);
   const template = templateReply(intent, context);
   const llmReply = await callLlm({ message, intent, context, template });
 
