@@ -247,7 +247,31 @@ export async function selectProviderPromotion(
   }
 
   const provider = await ensureProvider(userId);
+  const providerData = provider.toObject() as Record<string, unknown>;
+  const selectedPromotionIds = new Set(
+    (
+      (providerData.vip_promotions as Array<Record<string, unknown>> | null) ?? []
+    )
+      .map((item) => item.promotion_id)
+      .filter((id): id is string => typeof id === 'string'),
+  );
   const now = new Date().toISOString();
+
+  if (selectedPromotionIds.has(promotionId)) {
+    await Provider.updateOne(
+      { _id: provider._id },
+      {
+        $pull: {
+          vip_promotions: {
+            promotion_id: promotionId,
+          },
+        },
+        $set: { updated_at: now },
+      },
+    );
+    return getProviderVip(userId);
+  }
+
   await Provider.updateOne(
     { _id: provider._id },
     {

@@ -26,6 +26,10 @@ export async function upgradeProviderToEliteHandler(
   try {
     res.json(await upgradeProviderToElite(req.auth!.userId));
   } catch (error) {
+    if (error instanceof ProviderVipError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }

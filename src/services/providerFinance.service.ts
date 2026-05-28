@@ -7,6 +7,7 @@ import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { PayoutRequest, type PayoutRequestDoc } from '@/models/PayoutRequest.model';
 import { Provider, type ProviderDoc } from '@/models/Provider.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
+import { Wallet } from '@/models/Wallet.model';
 import { PLATFORM_COMMISSION_RATE, calculateCommission } from '@/services/walletLedger.service';
 
 const CURRENCY = 'USD';
@@ -17,7 +18,7 @@ type Period = 'weekly' | 'monthly' | 'yearly';
 type TxStatus = 'all' | 'paid' | 'pending' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
 
-type LeanProvider = Pick<ProviderDoc, '_id' | 'business_name'>;
+type LeanProvider = Pick<ProviderDoc, '_id' | 'business_name' | 'user_id'>;
 type LeanItem = BookingItemDoc & {
   commission_amount?: number | null;
   provider_net_amount?: number | null;
@@ -387,7 +388,7 @@ function buildHistory(items: LeanItem[], period: Period) {
 async function resolveProvider(providerId?: string): Promise<LeanProvider> {
   if (providerId) {
     const provider = (await Provider.findById(providerId)
-      .select({ _id: 1, business_name: 1 })
+      .select({ _id: 1, business_name: 1, user_id: 1 })
       .lean()) as LeanProvider | null;
     if (!provider) throw new ProviderFinanceError(404, 'Provider not found');
     return provider;
@@ -540,9 +541,10 @@ export async function getProviderFinance(input: {
   const provider = await resolveProvider(input.providerId);
   const period = normalizePeriod(input.period);
   const status = normalizeTxStatus(input.status);
-  const [itemsRaw, requests] = await Promise.all([
+  const [itemsRaw, requests, wallet] = await Promise.all([
     BookingItem.find({ provider_id: provider._id }).sort({ created_at: -1, _id: -1 }).lean(),
     payoutRequests(provider._id),
+    Wallet.findOne({ user_id: provider.user_id ?? provider._id }).lean(),
   ]);
   const items = itemsRaw as LeanItem[];
   const earnedItems = items.filter(isEarned);
@@ -551,8 +553,9 @@ export async function getProviderFinance(input: {
   const servicesProvided = earnedItems.reduce((sum, item) => sum + amountOf(item), 0);
   const serviceFees = earnedItems.reduce((sum, item) => sum + commissionOf(item), 0);
   const totalLifetimeEarnings = paidOutItems.reduce((sum, item) => sum + netAmountOf(item), 0);
-  const heldBalance = heldItems.reduce((sum, item) => sum + netAmountOf(item), 0);
-  const availableForPayout = Math.max(heldBalance - committedPayoutTotal(requests), 0);
+  const walletBalance =
+    typeof wallet?.balance === 'number' && Number.isFinite(wallet.balance) ? wallet.balance : 0;
+  const availableForPayout = Math.max(walletBalance - committedPayoutTotal(requests), 0);
   const history = buildHistory(items, period);
   const context = await loadContext(items.slice(0, 100));
   const allTransactions = items.map((item) => toTransaction(item, context));
