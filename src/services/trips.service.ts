@@ -54,6 +54,12 @@ export interface CreateTripInput {
   endDate?: unknown;
 }
 
+export interface UpdateTripItemTimeInput {
+  dayIndex?: unknown;
+  itemIndex?: unknown;
+  time?: unknown;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   ONGOING: 'ONGOING TRIP',
   UPCOMING: 'UPCOMING TRIP',
@@ -74,6 +80,20 @@ const DEFAULT_COVER =
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseTime(value: unknown): string | null {
+  const time = stringValue(value);
+  if (!/^\d{2}:\d{2}$/.test(time)) {
+    return null;
+  }
+
+  const [hour, minute] = time.split(':').map(Number);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  return time;
 }
 
 function parseDateOnly(value: unknown): Date | null {
@@ -138,17 +158,19 @@ function mapTrip(d: any): TripSummary {
     days: (d.days ?? []).map((day: any) => ({
       dayIndex: day.day_index,
       date: day.date ?? null,
-      items: (day.items ?? []).map((it: any) => ({
-        time: it.time,
-        title: it.title,
-        location: it.location_name ?? '',
-        category: it.category ?? 'SIGHTSEEING',
-        activityId: it.activity_id ?? null,
-        companions: (it.companions ?? []).map((c: any) => ({
-          name: c.name,
-          image: c.image ?? null,
-        })),
-      })),
+      items: (day.items ?? [])
+        .map((it: any) => ({
+          time: it.time,
+          title: it.title,
+          location: it.location_name ?? '',
+          category: it.category ?? 'SIGHTSEEING',
+          activityId: it.activity_id ?? null,
+          companions: (it.companions ?? []).map((c: any) => ({
+            name: c.name,
+            image: c.image ?? null,
+          })),
+        }))
+        .sort((a: TripItem, b: TripItem) => a.time.localeCompare(b.time)),
     })),
   };
 }
@@ -273,6 +295,47 @@ export async function addTripItem(
     body: `"${activity.title}" was added to day ${dayIndex}.`,
     actionRoute: `/trip_planner_timeline?id=${tripId}`,
   });
+
+  const updated = await Trip.findById(tripId).lean();
+  return mapTrip(updated);
+}
+
+export async function updateTripItemTime(
+  userId: string,
+  tripId: string,
+  input: UpdateTripItemTimeInput,
+): Promise<TripSummary> {
+  const dayIndex = Number(input.dayIndex);
+  const itemIndex = Number(input.itemIndex);
+  const time = parseTime(input.time);
+
+  if (!tripId || !Number.isInteger(dayIndex) || !Number.isInteger(itemIndex)) {
+    throw new TripError(400, 'tripId, dayIndex and itemIndex are required');
+  }
+  if (!time) {
+    throw new TripError(400, 'Time must be HH:mm');
+  }
+
+  const trip = await Trip.findOne({ _id: tripId, user_id: userId }).lean();
+  if (!trip) throw new TripError(404, 'Trip not found');
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const day = (trip.days ?? []).find((d: any) => d.day_index === dayIndex);
+  if (!day) throw new TripError(400, `Day ${dayIndex} does not exist`);
+  if (!Array.isArray(day.items) || itemIndex < 0 || itemIndex >= day.items.length) {
+    throw new TripError(400, 'Activity item does not exist');
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  await Trip.updateOne(
+    { _id: tripId, user_id: userId, 'days.day_index': dayIndex },
+    {
+      $set: {
+        [`days.$.items.${itemIndex}.time`]: time,
+        updated_at: new Date().toISOString(),
+      },
+    },
+  );
 
   const updated = await Trip.findById(tripId).lean();
   return mapTrip(updated);

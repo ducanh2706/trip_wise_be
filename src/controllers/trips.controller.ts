@@ -1,5 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import { getTrips, createTrip, addTripItem, TripError } from '@/services/trips.service';
+import {
+  getTrips,
+  createTrip,
+  addTripItem,
+  updateTripItemTime,
+  TripError,
+} from '@/services/trips.service';
 
 export async function getTripsHandler(
   req: Request,
@@ -45,6 +51,24 @@ export async function addTripItemHandler(
       Number(activityId),
     );
     res.status(201).json(updated);
+  } catch (err) {
+    if (err instanceof TripError) {
+      res.status(err.status).json({ message: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+export async function updateTripItemTimeHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const tripId = String(req.params.id);
+    const updated = await updateTripItemTime(req.auth!.userId, tripId, req.body ?? {});
+    res.json(updated);
   } catch (err) {
     if (err instanceof TripError) {
       res.status(err.status).json({ message: err.message });

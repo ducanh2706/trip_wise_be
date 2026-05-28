@@ -7,10 +7,11 @@ import { Room } from '@/models/Room.model';
 
 const MAX_LOCATION_DEPTH = 6;
 const SEARCH_SOURCE_LIMIT = 24;
-const DESTINATION_LIMIT = 8;
+const DESTINATION_LIMIT = 30;
 const HOTEL_LIMIT = 8;
 const FLIGHT_LIMIT = 8;
 const TOUR_LIMIT = 8;
+const LOCATION_SEARCH_CACHE_TTL_MS = 30_000;
 const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80';
 const priceFormatter = new Intl.NumberFormat('en-US');
@@ -31,6 +32,13 @@ type LeanHotel = Pick<
 >;
 
 type LeanLocation = Pick<LocationDoc, '_id' | 'name' | 'parent_id' | 'type'>;
+
+type LocationSearchEntry = {
+  location: LeanLocation;
+  label: string;
+  foldedName: string;
+  foldedLabel: string;
+};
 
 type LeanAirport = Pick<AirportDoc, '_id' | 'name' | 'location_id'>;
 
@@ -118,7 +126,24 @@ function normalizeCategory(value: string): SearchCategory {
 }
 
 function normalizeQuery(value: string): string {
-  return value.trim().toLowerCase();
+  return foldSearchText(value);
+}
+
+let locationSearchCache:
+  | {
+      expiresAt: number;
+      entries: LocationSearchEntry[];
+    }
+  | null = null;
+
+function foldSearchText(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/\s+/g, ' ');
 }
 
 function formatVnd(value: number | null): string | null {
@@ -216,7 +241,103 @@ function matchesQuery(values: Array<string | null | undefined>, query: string): 
     return true;
   }
 
-  return values.some((value) => value?.toLowerCase().includes(query));
+  return values.some((value) => foldSearchText(value).includes(query));
+}
+
+function buildLocationTrailFromMap(
+  startId: number,
+  locationMap: Map<number, LeanLocation>,
+): LeanLocation[] {
+  const trail: LeanLocation[] = [];
+  const visitedIds = new Set<number>();
+  let currentId: number | null = startId;
+
+  for (let depth = 0; depth < MAX_LOCATION_DEPTH && currentId !== null; depth++) {
+    if (visitedIds.has(currentId)) {
+      break;
+    }
+
+    visitedIds.add(currentId);
+    const location = locationMap.get(currentId);
+    if (!location) {
+      break;
+    }
+
+    trail.push(location);
+    currentId = typeof location.parent_id === 'number' ? location.parent_id : null;
+  }
+
+  return trail;
+}
+
+async function loadLocationSearchEntries(): Promise<LocationSearchEntry[]> {
+  if (locationSearchCache && locationSearchCache.expiresAt > Date.now()) {
+    return locationSearchCache.entries;
+  }
+
+  const locations = (await Location.find({})
+    .select({ _id: 1, name: 1, parent_id: 1, type: 1 })
+    .sort({ _id: -1 })
+    .lean()) as LeanLocation[];
+
+  const locationMap = new Map(locations.map((location) => [location._id, location]));
+  const entries = locations.map<LocationSearchEntry>((location) => {
+    const label = buildLocationLabel(buildLocationTrailFromMap(location._id, locationMap));
+
+    return {
+      location,
+      label: label || location.name,
+      foldedName: foldSearchText(location.name),
+      foldedLabel: foldSearchText(label || location.name),
+    };
+  });
+
+  locationSearchCache = {
+    expiresAt: Date.now() + LOCATION_SEARCH_CACHE_TTL_MS,
+    entries,
+  };
+
+  return entries;
+}
+
+function scoreLocationEntry(entry: LocationSearchEntry, query: string): number {
+  if (!query) {
+    return 0;
+  }
+
+  if (entry.foldedName === query) return 100;
+  if (entry.foldedName.startsWith(query)) return 90;
+  if (entry.foldedName.includes(query)) return 80;
+  if (entry.foldedLabel.startsWith(query)) return 70;
+  if (entry.foldedLabel.includes(query)) return 60;
+
+  const tokens = query.split(' ').filter(Boolean);
+  if (tokens.length > 1 && tokens.every((token) => entry.foldedLabel.includes(token))) {
+    return 50;
+  }
+
+  return 0;
+}
+
+async function searchLocations(query: string): Promise<LeanLocation[]> {
+  const entries = await loadLocationSearchEntries();
+
+  if (!query) {
+    return entries.slice(0, DESTINATION_LIMIT).map((entry) => entry.location);
+  }
+
+  return entries
+    .map((entry) => ({ entry, score: scoreLocationEntry(entry, query) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      return a.entry.foldedLabel.length - b.entry.foldedLabel.length;
+    })
+    .slice(0, DESTINATION_LIMIT)
+    .map((item) => item.entry.location);
 }
 
 async function getCheapestRoomPrices(hotelIds: number[]): Promise<Map<number, number>> {
@@ -324,8 +445,9 @@ export async function getSearchData(input: {
   const shouldLoadHotels = category === 'all' || category === 'hotels';
   const shouldLoadFlights = category === 'all' || category === 'flights';
   const shouldLoadTours = category === 'all' || category === 'tours';
+  const shouldLoadDestinations = category !== 'flights';
 
-  const [hotels, flights, tours, airportMap] = await Promise.all([
+  const [hotels, flights, tours, directLocations, airportMap] = await Promise.all([
     shouldLoadHotels
       ? Hotel.find({
           deleted_at: null,
@@ -383,16 +505,19 @@ export async function getSearchData(input: {
           .limit(SEARCH_SOURCE_LIMIT)
           .lean()
       : Promise.resolve([]),
+    shouldLoadDestinations ? searchLocations(query) : Promise.resolve([]),
     shouldLoadFlights ? buildAirportMap() : Promise.resolve(new Map<string, LeanAirport>()),
   ]);
 
   const leanHotels = hotels as LeanHotel[];
   const leanFlights = flights as LeanFlight[];
   const leanTours = tours as LeanActivity[];
+  const leanDirectLocations = directLocations as LeanLocation[];
 
   const locationIds = [
     ...leanHotels.map((hotel) => hotel.location_id),
     ...leanTours.map((tour) => tour.location_id),
+    ...leanDirectLocations.map((location) => location._id),
     ...Array.from(airportMap.values()).map((airport) => airport.location_id),
   ];
 
@@ -424,8 +549,21 @@ export async function getSearchData(input: {
     .filter((hotel): hotel is SearchHotelItem => hotel !== null)
     .slice(0, HOTEL_LIMIT);
 
-  const destinationItems = uniqueByKey(
-    leanHotels
+  const directDestinationItems = leanDirectLocations
+    .map<SearchDestinationItem>((location) => {
+      const trail = buildLocationTrail(location._id, locationMap);
+      const locationLabel = buildLocationLabel(trail) || location.name;
+
+      return {
+        id: location._id,
+        name: location.name,
+        subtitle: locationLabel,
+        queryValue: location.name,
+      };
+    })
+    .filter((item) => matchesQuery([item.name, item.subtitle], query));
+
+  const hotelDestinationItems = leanHotels
       .map<SearchDestinationItem | null>((hotel) => {
         const trail = buildLocationTrail(hotel.location_id, locationMap);
         const locationLabel = buildLocationLabel(trail);
@@ -442,7 +580,10 @@ export async function getSearchData(input: {
           queryValue: destinationName,
         };
       })
-      .filter((item): item is SearchDestinationItem => item !== null),
+      .filter((item): item is SearchDestinationItem => item !== null);
+
+  const destinationItems = uniqueByKey(
+    [...directDestinationItems, ...hotelDestinationItems],
     (item) => item.name.toLowerCase(),
     DESTINATION_LIMIT,
   );
