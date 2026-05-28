@@ -2,6 +2,8 @@ import { NextFunction, Request, Response } from 'express';
 import {
   CheckoutError,
   completeCheckout,
+  confirmCheckoutPayOSPayment,
+  getCheckoutPayOSSession,
   getCheckoutSummary,
 } from '@/services/checkout.service';
 
@@ -56,6 +58,42 @@ export async function completeCheckoutHandler(
         paymentMethod: body.paymentMethod,
         usePoints: body.usePoints,
         agreeToTerms: body.agreeToTerms,
+      }),
+    );
+  } catch (error) {
+    handleCheckoutError(error, res, next);
+  }
+}
+
+export async function getCheckoutPayOSSessionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.json(
+      await getCheckoutPayOSSession({
+        userId: req.auth!.userId,
+        bookingId: req.query.bookingId,
+        paymentId: req.query.paymentId,
+      }),
+    );
+  } catch (error) {
+    handleCheckoutError(error, res, next);
+  }
+}
+
+export async function confirmCheckoutPayOSPaymentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const body = req.body ?? {};
+    res.json(
+      await confirmCheckoutPayOSPayment({
+        userId: req.auth!.userId,
+        bookingId: body.bookingId,
       }),
     );
   } catch (error) {

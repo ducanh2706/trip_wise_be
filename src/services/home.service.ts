@@ -36,8 +36,18 @@ const priceFormatter = new Intl.NumberFormat('en-US');
 
 type LeanHotel = Pick<
   HotelDoc,
-  '_id' | 'location_id' | 'name' | 'address' | 'star_rating' | 'image' | 'images'
->;
+  | '_id'
+  | 'location_id'
+  | 'name'
+  | 'address'
+  | 'star_rating'
+  | 'image'
+  | 'images'
+  | 'status'
+  | 'listing_status'
+> & {
+  reviewed_at?: string | null;
+};
 
 type LeanLocation = Pick<LocationDoc, '_id' | 'name' | 'parent_id' | 'type'>;
 
@@ -56,6 +66,18 @@ interface BaseHomeHotel {
 
 interface HomeSourceHotel extends BaseHomeHotel {
   hasImage: boolean;
+  isApproved: boolean;
+  reviewedAtTs: number;
+}
+
+function keepNewestApprovedFirst(items: HomeSourceHotel[]): HomeSourceHotel[] {
+  if (items.length <= 1) return items;
+  const newestApproved = items.find((item) => item.isApproved && item.reviewedAtTs > 0);
+  if (!newestApproved) return items;
+  return [
+    newestApproved,
+    ...items.filter((item) => item.hotelId !== newestApproved.hotelId),
+  ];
 }
 
 export interface HomeSearchDetailItem {
@@ -392,6 +414,15 @@ function compareNullableNumberAsc(a: number | null, b: number | null): number {
 }
 
 function compareHomePriority(a: HomeSourceHotel, b: HomeSourceHotel): number {
+  const approvedDelta = Number(b.isApproved) - Number(a.isApproved);
+  if (approvedDelta !== 0) {
+    return approvedDelta;
+  }
+
+  if (b.reviewedAtTs !== a.reviewedAtTs) {
+    return b.reviewedAtTs - a.reviewedAtTs;
+  }
+
   const imageDelta = Number(b.hasImage) - Number(a.hasImage);
   if (imageDelta !== 0) {
     return imageDelta;
@@ -692,8 +723,11 @@ export async function getHomeData(): Promise<HomeResponse> {
         star_rating: 1,
         image: 1,
         images: 1,
+        status: 1,
+        listing_status: 1,
+        reviewed_at: 1,
       })
-      .sort({ star_rating: -1, _id: 1 })
+      .sort({ reviewed_at: -1, updated_at: -1, _id: -1 })
       .limit(HOME_SOURCE_LIMIT)
       .lean(),
   ]);
@@ -722,9 +756,17 @@ export async function getHomeData(): Promise<HomeResponse> {
 
   const sourceHotels: HomeSourceHotel[] = leanHotels.map((hotel) => {
     const locationTrail = buildLocationTrail(hotel.location_id, locationMap);
-    const locationLabel = buildLocationLabel(locationTrail) || hotel.address;
+    const locationLabel =
+      (isFilledString(hotel.address) ? hotel.address.trim() : '') ||
+      buildLocationLabel(locationTrail);
     const priceFrom = cheapestPrices.get(hotel._id) ?? null;
     const imageUrl = pickPrimaryImage(hotel.images, hotel.image);
+
+    const rawStatus = String(hotel.status ?? '').trim().toUpperCase();
+    const rawListingStatus = String(hotel.listing_status ?? '').trim().toLowerCase();
+    const isApproved =
+      rawStatus === 'LIVE' || rawStatus === 'APPROVED' || rawListingStatus === 'active';
+    const reviewedAtTs = Date.parse(String(hotel.reviewed_at ?? ''));
 
     return {
       hotelId: hotel._id,
@@ -738,6 +780,8 @@ export async function getHomeData(): Promise<HomeResponse> {
       rating: hotel.star_rating,
       ratingLabel: hotel.star_rating.toFixed(1),
       hasImage: imageUrl !== null,
+      isApproved,
+      reviewedAtTs: Number.isFinite(reviewedAtTs) ? reviewedAtTs : 0,
     };
   });
 
@@ -766,7 +810,8 @@ export async function getHomeData(): Promise<HomeResponse> {
     prioritizedHotels,
     FEATURED_LIMIT,
   );
-  const featuredIds = new Set(featuredSource.map((hotel) => hotel.hotelId));
+  const featuredSourceWithNewest = keepNewestApprovedFirst(featuredSource);
+  const featuredIds = new Set(featuredSourceWithNewest.map((hotel) => hotel.hotelId));
   const remainingHotels = prioritizedHotels.filter(
     (hotel) => !featuredIds.has(hotel.hotelId),
   );
@@ -787,6 +832,7 @@ export async function getHomeData(): Promise<HomeResponse> {
     ),
     RECOMMENDED_LIMIT,
   );
+  const recommendedSourceWithNewest = keepNewestApprovedFirst(recommendedSource);
 
   const trendingSeed = pickByIds(curated.trendingHotelIds, hotelById);
   const trendingSource = fillMissingHotels(
@@ -794,6 +840,7 @@ export async function getHomeData(): Promise<HomeResponse> {
     prioritizedHotels,
     TRENDING_LIMIT,
   );
+  const trendingSourceWithNewest = keepNewestApprovedFirst(trendingSource);
 
   const offerCtaLabels = config.sections.offers.ctaLabels?.length
     ? config.sections.offers.ctaLabels
@@ -805,9 +852,14 @@ export async function getHomeData(): Promise<HomeResponse> {
     ? config.sections.recommended.cardHeights
     : DEFAULT_RECOMMENDED_CARD_HEIGHTS;
 
-  const featuredOffers = featuredSource.map<HomeOfferItem>((hotel, index) => {
+  const featuredOffers = featuredSourceWithNewest.map<HomeOfferItem>((hotel, index) => {
     const override = offerOverrideByHotelId.get(hotel.hotelId);
-    const { hasImage: _hasImage, ...hotelPayload } = hotel;
+    const {
+      hasImage: _hasImage,
+      isApproved: _isApproved,
+      reviewedAtTs: _reviewedAtTs,
+      ...hotelPayload
+    } = hotel;
 
     return {
       ...hotelPayload,
@@ -840,10 +892,15 @@ export async function getHomeData(): Promise<HomeResponse> {
     };
   });
 
-  const recommendedDestinations = recommendedSource.map<HomeRecommendedItem>(
+  const recommendedDestinations = recommendedSourceWithNewest.map<HomeRecommendedItem>(
     (hotel, index) => {
       const override = recommendedOverrideByHotelId.get(hotel.hotelId);
-      const { hasImage: _hasImage, ...hotelPayload } = hotel;
+      const {
+        hasImage: _hasImage,
+        isApproved: _isApproved,
+        reviewedAtTs: _reviewedAtTs,
+        ...hotelPayload
+      } = hotel;
 
       return {
         ...hotelPayload,
@@ -871,9 +928,14 @@ export async function getHomeData(): Promise<HomeResponse> {
     },
   );
 
-  const trendingHotels = trendingSource.map<HomeTrendingHotelItem>((hotel) => {
+  const trendingHotels = trendingSourceWithNewest.map<HomeTrendingHotelItem>((hotel) => {
     const override = trendingOverrideByHotelId.get(hotel.hotelId);
-    const { hasImage: _hasImage, ...hotelPayload } = hotel;
+    const {
+      hasImage: _hasImage,
+      isApproved: _isApproved,
+      reviewedAtTs: _reviewedAtTs,
+      ...hotelPayload
+    } = hotel;
 
     return {
       ...hotelPayload,

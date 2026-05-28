@@ -96,4 +96,10 @@ export const env = {
     process.env.LLM_API_URL ??
     `https://generativelanguage.googleapis.com/v1beta/models/${llmModel}:generateContent`,
   llmModel,
+  payosClientId: process.env.PAYOS_CLIENT_ID?.trim() ?? '',
+  payosApiKey: process.env.PAYOS_API_KEY?.trim() ?? '',
+  payosChecksumKey: process.env.PAYOS_CHECKSUM_KEY?.trim() ?? '',
+  payosReturnUrl: process.env.PAYOS_RETURN_URL?.trim() ?? 'tripwise://payos/return',
+  payosCancelUrl: process.env.PAYOS_CANCEL_URL?.trim() ?? 'tripwise://payos/cancel',
+  payosQrExpireSeconds: Math.max(60, Number(process.env.PAYOS_QR_EXPIRE_SECONDS ?? 300) || 300),
 };

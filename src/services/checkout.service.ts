@@ -12,6 +12,11 @@ import { createNotification } from '@/services/notifications.service';
 import { env } from '@/config/env';
 import { calculateCommission, creditWallet, ensureWallet } from '@/services/walletLedger.service';
 import { calculateCompletedPoints } from '@/services/wallet.service';
+import {
+  createPayOSPaymentLink,
+  getPayOSPaymentLinkStatus,
+  isPayOSEnabled,
+} from '@/services/payos.service';
 
 export class CheckoutError extends Error {
   constructor(
@@ -76,6 +81,36 @@ export interface CheckoutCompleteResponse {
   paymentId: string;
   nextRoute: string;
   statusLabel: string;
+  message: string;
+  payos?: {
+    paymentLinkId: string;
+    orderCode: number;
+    checkoutUrl: string;
+    qrCode: string;
+    status: string;
+    expiresAt: number;
+  };
+}
+
+export interface CheckoutPayOSSessionResponse {
+  bookingId: string;
+  paymentId: string;
+  status: string;
+  amount: number;
+  paymentLinkId: string;
+  orderCode: number;
+  checkoutUrl: string;
+  qrCode: string;
+  expiresAt: number | null;
+}
+
+export interface CheckoutPayOSConfirmResponse {
+  bookingId: string;
+  paymentId: string;
+  paymentStatus: string;
+  bookingStatus: string;
+  nextRoute: string;
+  isPaid: boolean;
   message: string;
 }
 
@@ -248,6 +283,168 @@ function maxRedeemablePoints(total: number, availablePoints: number): number {
   );
 }
 
+function createPayOSOrderCode(): number {
+  const epochSeconds = Math.floor(Date.now() / 1000);
+  const random = Math.floor(100 + Math.random() * 900);
+  return Number(`${epochSeconds}${random}`);
+}
+
+function payOSAmountFromUsd(usdAmount: number): number {
+  const approxVndRate = 25_000;
+  return Math.max(1000, Math.round(usdAmount * approxVndRate));
+}
+
+function buildPayOSReturnUrl(bookingId: string, paymentId: string): string {
+  const base = env.payosReturnUrl.trim();
+  if (!base) {
+    return `tripwise://payos/return?bookingId=${encodeURIComponent(bookingId)}&paymentId=${encodeURIComponent(paymentId)}`;
+  }
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}bookingId=${encodeURIComponent(bookingId)}&paymentId=${encodeURIComponent(paymentId)}`;
+}
+
+function buildPayOSCancelUrl(bookingId: string, paymentId: string): string {
+  const base = env.payosCancelUrl.trim();
+  if (!base) {
+    return `tripwise://payos/cancel?bookingId=${encodeURIComponent(bookingId)}&paymentId=${encodeURIComponent(paymentId)}`;
+  }
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}bookingId=${encodeURIComponent(bookingId)}&paymentId=${encodeURIComponent(paymentId)}`;
+}
+
+function asNumber(raw: unknown): number | null {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function notifyProviderBookingPending(providerId: string, hotelName: string): Promise<void> {
+  const provider = await Provider.findById(providerId)
+    .select({ user_id: 1, business_name: 1 })
+    .lean();
+  const providerUserId = provider?.user_id || provider?._id;
+  if (!providerUserId) return;
+  await createNotification({
+    userId: providerUserId,
+    type: 'BOOKING',
+    title: 'New booking request',
+    body: `${hotelName} has a new booking awaiting your confirmation.`,
+    actionRoute: '/order_manager',
+  });
+}
+
+async function settleSuccessfulCheckoutPayment(input: {
+  userId: string;
+  bookingId: string;
+  paymentId: string;
+  providerId: string;
+  bookingItemId: string;
+  amountDue: number;
+  pointsDiscount: number;
+  hotelName: string;
+  transactionId: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  await Promise.all([
+    Payment.updateOne(
+      { _id: input.paymentId, user_id: input.userId },
+      {
+        $set: {
+          status: 'SUCCESS',
+          transaction_id: input.transactionId,
+          updated_at: now,
+        },
+      },
+    ),
+    Booking.updateOne(
+      { _id: input.bookingId, user_id: input.userId },
+      {
+        $set: {
+          status: 'PENDING',
+          updated_at: now,
+        },
+      },
+    ),
+    BookingItem.updateOne(
+      { _id: input.bookingItemId, booking_id: input.bookingId },
+      {
+        $set: {
+          item_status: 'PENDING',
+          escrow_status: 'HELD',
+          updated_at: now,
+        },
+      },
+    ),
+  ]);
+
+  if (input.pointsDiscount > 0) {
+    const existingRedeem = await WalletTx.findOne({
+      booking_id: input.bookingId,
+      booking_item_id: input.bookingItemId,
+      type: 'POINT_REDEEM',
+    }).lean();
+
+    if (!existingRedeem) {
+      await WalletTx.create({
+        _id: randomUUID(),
+        user_id: input.userId,
+        type: 'POINT_REDEEM',
+        amount: input.pointsDiscount,
+        card_id: 'points',
+        card_last4: null,
+        status: 'SUCCESS',
+        booking_id: input.bookingId,
+        booking_item_id: input.bookingItemId,
+        provider_id: input.providerId,
+        note: 'Points discount applied to booking',
+        created_at: now,
+      });
+
+      const summary = await calculateCompletedPoints(input.userId);
+      await Wallet.updateOne(
+        { user_id: input.userId },
+        {
+          $set: {
+            loyalty_points: Math.max(summary.points - input.pointsDiscount, 0),
+            updated_at: now,
+          },
+        },
+      );
+    }
+  }
+
+  if (input.amountDue > 0) {
+    const escrowExists = await WalletTx.findOne({
+      booking_id: input.bookingId,
+      booking_item_id: input.bookingItemId,
+      type: 'BOOKING_ESCROW_IN',
+    }).lean();
+
+    if (!escrowExists) {
+      await creditWallet({
+        userId: env.adminWalletUserId,
+        amount: input.amountDue,
+        type: 'BOOKING_ESCROW_IN',
+        status: 'HELD',
+        bookingId: input.bookingId,
+        bookingItemId: input.bookingItemId,
+        providerId: input.providerId,
+        note: `Escrow payment for ${input.hotelName}`,
+      });
+    }
+  }
+
+  await createNotification({
+    userId: input.userId,
+    type: 'BOOKING',
+    title: 'Booking request received',
+    body: `${input.hotelName} is waiting for provider confirmation.`,
+    actionRoute: `/payment_success?bookingId=${input.bookingId}&paymentId=${input.paymentId}`,
+  });
+
+  await notifyProviderBookingPending(input.providerId, input.hotelName);
+}
+
 export async function getCheckoutSummary(input: {
   userId: string;
   hotelId?: unknown;
@@ -344,6 +541,7 @@ export async function completeCheckout(input: {
   const bookingId = randomUUID();
   const bookingItemId = randomUUID();
   const paymentId = randomUUID();
+  const payosOrderCode = paymentMethodDb === 'WALLET' ? null : createPayOSOrderCode();
 
   if (paymentMethodDb === 'WALLET') {
     await ensureWallet(input.userId);
@@ -365,7 +563,7 @@ export async function completeCheckout(input: {
       discount_amount: pointsDiscount,
       final_amount: amountDue,
       currency: 'USD',
-      status: 'PENDING',
+      status: paymentMethodDb === 'WALLET' ? 'PENDING' : 'PENDING_PAYMENT',
       created_at: now,
       updated_at: now,
       deleted_at: null,
@@ -386,10 +584,10 @@ export async function completeCheckout(input: {
       commission_rate: env.platformCommissionRate,
       commission_amount: settlement.commissionAmount,
       provider_net_amount: settlement.providerNetAmount,
-      escrow_status: 'HELD',
+      escrow_status: paymentMethodDb === 'WALLET' ? 'HELD' : 'NONE',
       payout_request_id: null,
       paid_to_provider_at: null,
-      item_status: 'PENDING',
+      item_status: paymentMethodDb === 'WALLET' ? 'PENDING' : 'PENDING_PAYMENT',
       e_ticket_code: ticketCode(),
       created_at: now,
       updated_at: now,
@@ -400,81 +598,259 @@ export async function completeCheckout(input: {
       user_id: input.userId,
       payment_method: paymentMethodDb,
       amount: amountDue,
-      transaction_id: `TX-${Date.now()}`,
-      status: 'SUCCESS',
+      transaction_id: paymentMethodDb === 'WALLET' ? `TX-${Date.now()}` : null,
+      status: paymentMethodDb === 'WALLET' ? 'SUCCESS' : 'PENDING',
+      payos_order_code: payosOrderCode,
       created_at: now,
       updated_at: now,
-    }),
+    } as any),
   ]);
 
-  if (pointsDiscount > 0) {
-    await WalletTx.create({
-      _id: randomUUID(),
-      user_id: input.userId,
-      type: 'POINT_REDEEM',
-      amount: pointsDiscount,
-      card_id: 'points',
-      card_last4: null,
-      status: 'SUCCESS',
-      booking_id: bookingId,
-      booking_item_id: bookingItemId,
-      provider_id: listing.providerId,
-      note: 'Points discount applied to booking',
-      created_at: now,
+  if (paymentMethodDb === 'WALLET') {
+    await settleSuccessfulCheckoutPayment({
+      userId: input.userId,
+      bookingId,
+      paymentId,
+      providerId: listing.providerId,
+      bookingItemId,
+      amountDue,
+      pointsDiscount,
+      hotelName: listing.hotelName,
+      transactionId: `TX-${Date.now()}`,
     });
-    await Wallet.updateOne(
-      { user_id: input.userId },
-      {
-        $set: {
-          loyalty_points: Math.max(pointSummary.points - pointsDiscount, 0),
-          updated_at: now,
-        },
-      },
+
+    return {
+      bookingId,
+      paymentId,
+      nextRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
+      statusLabel: 'PENDING',
+      message: 'Booking request submitted. The provider will confirm it shortly.',
+    };
+  }
+
+  if (!isPayOSEnabled()) {
+    throw new CheckoutError(
+      503,
+      'PayOS is not configured yet. Please provide PAYOS_CLIENT_ID, PAYOS_API_KEY and PAYOS_CHECKSUM_KEY.',
     );
   }
 
-  await creditWallet({
-    userId: env.adminWalletUserId,
-    amount: amountDue,
-    type: 'BOOKING_ESCROW_IN',
-    status: 'HELD',
-    bookingId,
-    bookingItemId,
-    providerId: listing.providerId,
-    note: `Escrow payment for ${listing.hotelName}`,
-  });
-
-  await createNotification({
-    userId: input.userId,
-    type: 'BOOKING',
-    title: 'Booking request received',
-    body: `${listing.hotelName} is waiting for provider confirmation.`,
-    actionRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
-  });
-
-  // Provider-side notification: the listing owner needs to act on this. The
-  // Provider model's `user_id` is the account that gets pushed; fall back to
-  // `_id` when that's missing (legacy providers were created with id === user
-  // id — see adminPayouts.summarizeProvider for the same fallback).
-  const provider = await Provider.findById(listing.providerId)
-    .select({ user_id: 1, business_name: 1 })
-    .lean();
-  const providerUserId = provider?.user_id || provider?._id;
-  if (providerUserId) {
-    await createNotification({
-      userId: providerUserId,
-      type: 'BOOKING',
-      title: 'New booking request',
-      body: `${listing.hotelName} has a new booking awaiting your confirmation.`,
-      actionRoute: '/order_manager',
+  try {
+    const paymentLink = await createPayOSPaymentLink({
+      orderCode: payosOrderCode!,
+      amount: payOSAmountFromUsd(amountDue),
+      description: `TW-${bookingId.slice(0, 8)}`,
+      itemName: `${listing.hotelName} - ${listing.roomType}`,
+      quantity: guests,
+      returnUrl: buildPayOSReturnUrl(bookingId, paymentId),
+      cancelUrl: buildPayOSCancelUrl(bookingId, paymentId),
+      buyerName: undefined,
+      buyerEmail: undefined,
+      buyerPhone: undefined,
     });
+
+    await Payment.updateOne(
+      { _id: paymentId, booking_id: bookingId },
+      {
+        $set: {
+          payos_payment_link_id: paymentLink.paymentLinkId,
+          payos_checkout_url: paymentLink.checkoutUrl,
+          payos_qr_code: paymentLink.qrCode,
+          payos_expired_at: paymentLink.expiredAt,
+          payos_last_status: paymentLink.status,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    );
+
+    return {
+      bookingId,
+      paymentId,
+      nextRoute: '/home',
+      statusLabel: 'PENDING_PAYMENT',
+      message: 'Please complete payment with PayOS within 5 minutes.',
+      payos: {
+        paymentLinkId: paymentLink.paymentLinkId,
+        orderCode: paymentLink.orderCode,
+        checkoutUrl: paymentLink.checkoutUrl,
+        qrCode: paymentLink.qrCode,
+        status: paymentLink.status,
+        expiresAt: paymentLink.expiredAt,
+      },
+    };
+  } catch (error) {
+    await Promise.all([
+      Payment.updateOne(
+        { _id: paymentId, booking_id: bookingId },
+        { $set: { status: 'FAILED', updated_at: new Date().toISOString() } },
+      ),
+      BookingItem.updateOne(
+        { _id: bookingItemId, booking_id: bookingId },
+        { $set: { item_status: 'FAILED', updated_at: new Date().toISOString() } },
+      ),
+      Booking.updateOne(
+        { _id: bookingId, user_id: input.userId },
+        { $set: { status: 'FAILED', updated_at: new Date().toISOString() } },
+      ),
+    ]);
+    const message = error instanceof Error ? error.message : 'Could not create PayOS payment link';
+    throw new CheckoutError(502, message);
+  }
+}
+
+export async function getCheckoutPayOSSession(input: {
+  userId: string;
+  bookingId?: unknown;
+  paymentId?: unknown;
+}): Promise<CheckoutPayOSSessionResponse> {
+  const bookingId = typeof input.bookingId === 'string' ? input.bookingId.trim() : '';
+  if (!bookingId) throw new CheckoutError(400, 'Missing bookingId');
+
+  const booking = await Booking.findOne({ _id: bookingId, user_id: input.userId }).lean();
+  if (!booking) throw new CheckoutError(404, 'Booking not found');
+
+  const payment = await Payment.findOne({
+    booking_id: bookingId,
+    ...(typeof input.paymentId === 'string' && input.paymentId.trim()
+      ? { _id: input.paymentId.trim() }
+      : {}),
+  })
+    .sort({ created_at: -1, _id: -1 })
+    .lean();
+
+  if (!payment) throw new CheckoutError(404, 'Payment not found');
+  const paymentAny = payment as Record<string, unknown>;
+
+  const paymentLinkId =
+    typeof paymentAny.payos_payment_link_id === 'string'
+      ? paymentAny.payos_payment_link_id
+      : '';
+  const checkoutUrl =
+    typeof paymentAny.payos_checkout_url === 'string' ? paymentAny.payos_checkout_url : '';
+  const qrCode = typeof paymentAny.payos_qr_code === 'string' ? paymentAny.payos_qr_code : '';
+  const orderCode = asNumber(paymentAny.payos_order_code);
+  const expiresAt = asNumber(paymentAny.payos_expired_at);
+
+  if (!paymentLinkId || !checkoutUrl || !qrCode || orderCode == null) {
+    throw new CheckoutError(409, 'This booking does not have a PayOS payment session');
   }
 
   return {
     bookingId,
+    paymentId: String(payment._id),
+    status: String(payment.status ?? 'PENDING'),
+    amount: typeof payment.amount === 'number' ? payment.amount : 0,
+    paymentLinkId,
+    orderCode,
+    checkoutUrl,
+    qrCode,
+    expiresAt,
+  };
+}
+
+export async function confirmCheckoutPayOSPayment(input: {
+  userId: string;
+  bookingId?: unknown;
+}): Promise<CheckoutPayOSConfirmResponse> {
+  const bookingId = typeof input.bookingId === 'string' ? input.bookingId.trim() : '';
+  if (!bookingId) throw new CheckoutError(400, 'Missing bookingId');
+
+  const booking = await Booking.findOne({ _id: bookingId, user_id: input.userId }).lean();
+  if (!booking) throw new CheckoutError(404, 'Booking not found');
+
+  const [payment, bookingItem] = await Promise.all([
+    Payment.findOne({ booking_id: bookingId }).sort({ created_at: -1, _id: -1 }).lean(),
+    BookingItem.findOne({ booking_id: bookingId }).sort({ created_at: 1, _id: 1 }).lean(),
+  ]);
+  if (!payment || !bookingItem) throw new CheckoutError(404, 'Booking payment not found');
+  const paymentAny = payment as Record<string, unknown>;
+
+  const paymentId = String(payment._id);
+  if (String(payment.status ?? '').toUpperCase() === 'SUCCESS') {
+    return {
+      bookingId,
+      paymentId,
+      paymentStatus: 'SUCCESS',
+      bookingStatus: String(booking.status ?? 'PENDING'),
+      nextRoute: `/my_trips?status=upcoming&bookingId=${encodeURIComponent(bookingId)}`,
+      isPaid: true,
+      message: 'Payment has already been confirmed.',
+    };
+  }
+
+  const paymentLinkId =
+    typeof paymentAny.payos_payment_link_id === 'string'
+      ? paymentAny.payos_payment_link_id
+      : '';
+  const orderCode = asNumber(paymentAny.payos_order_code);
+  if (!paymentLinkId && orderCode == null) {
+    throw new CheckoutError(409, 'Missing PayOS payment link information');
+  }
+
+  let status = 'PENDING';
+  let transactionId = typeof payment.transaction_id === 'string' ? payment.transaction_id : '';
+  try {
+    const link = await getPayOSPaymentLinkStatus(paymentLinkId || orderCode!);
+    status = link.status;
+    transactionId = link.transactions?.[0]?.reference || transactionId;
+    await Payment.updateOne(
+      { _id: paymentId },
+      {
+        $set: {
+          payos_last_status: status,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not verify PayOS payment';
+    throw new CheckoutError(502, message);
+  }
+
+  if (status !== 'PAID') {
+    return {
+      bookingId,
+      paymentId,
+      paymentStatus: status,
+      bookingStatus: String(booking.status ?? 'PENDING_PAYMENT'),
+      nextRoute: '/home',
+      isPaid: false,
+      message: status === 'EXPIRED'
+        ? 'QR payment expired. Please create a new booking.'
+        : 'Payment has not completed yet.',
+    };
+  }
+
+  const room = bookingItem.room_id
+    ? await Room.findOne({ _id: bookingItem.room_id }).select({ hotel_id: 1 }).lean()
+    : null;
+  const hotelName = room?.hotel_id
+    ? await Hotel.findOne({ _id: room.hotel_id })
+        .select({ name: 1 })
+        .lean()
+        .then((h) => h?.name ?? 'your booking')
+    : 'your booking';
+
+  await settleSuccessfulCheckoutPayment({
+    userId: input.userId,
+    bookingId,
     paymentId,
-    nextRoute: `/payment_success?bookingId=${bookingId}&paymentId=${paymentId}`,
-    statusLabel: 'PENDING',
-    message: 'Booking request submitted. The provider will confirm it shortly.',
+    providerId: String(bookingItem.provider_id),
+    bookingItemId: String(bookingItem._id),
+    amountDue: typeof payment.amount === 'number' ? payment.amount : 0,
+    pointsDiscount:
+      typeof booking.discount_amount === 'number' ? Math.max(0, booking.discount_amount) : 0,
+    hotelName,
+    transactionId: transactionId || `PAYOS-${Date.now()}`,
+  });
+
+  return {
+    bookingId,
+    paymentId,
+    paymentStatus: 'SUCCESS',
+    bookingStatus: 'PENDING',
+    nextRoute: `/my_trips?status=upcoming&bookingId=${encodeURIComponent(bookingId)}`,
+    isPaid: true,
+    message: 'Payment confirmed successfully.',
   };
 }
