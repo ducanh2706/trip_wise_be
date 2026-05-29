@@ -19,6 +19,7 @@ import {
   listAdminCancellationRequests,
   reviewCancellationRequest,
 } from '@/services/adminCancellations.service';
+import { lookupOrderByTicketCode } from '@/services/orders.service';
 
 function handleAdminError(error: unknown, res: Response, next: NextFunction): void {
   if (
@@ -151,6 +152,23 @@ export async function reviewCancellationRequestHandler(
         decision: req.body?.decision,
       }),
     );
+  } catch (error) {
+    handleAdminError(error, res, next);
+  }
+}
+
+export async function lookupAdminTicketHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const order = await lookupOrderByTicketCode({ code: firstString(req.params.code) });
+    if (!order) {
+      res.status(404).json({ message: 'Ticket code not found' });
+      return;
+    }
+    res.json(order);
   } catch (error) {
     handleAdminError(error, res, next);
   }

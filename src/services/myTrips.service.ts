@@ -67,6 +67,9 @@ export interface MyTripDetail {
   statusLabel: string;
   imageUrl: string;
   ticketCode: string;
+  cabinClass: string | null;
+  seatNumbers: string[];
+  airlineName: string | null;
   dateLabel: string;
   startDate: string | null;
   endDate: string | null;
@@ -153,6 +156,33 @@ function normalizeItemStatus(value: unknown): UiTab {
   if (typeof value !== 'string') return 'upcoming';
   const key = value.trim().toUpperCase();
   return STATUS_ALIASES[key] ?? 'upcoming';
+}
+
+function hasEnded(end?: string | null): boolean {
+  const endDate = parseDate(end);
+  if (!endDate) return false;
+
+  const today = new Date();
+  const todayStartUtc = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
+  const endDayUtc = Date.UTC(
+    endDate.getUTCFullYear(),
+    endDate.getUTCMonth(),
+    endDate.getUTCDate(),
+  );
+
+  return endDayUtc < todayStartUtc;
+}
+
+function effectiveItemTab(rawStatus: string, item: LeanItem): UiTab {
+  const tab = normalizeItemStatus(rawStatus);
+  if (tab === 'cancelled') return 'cancelled';
+  if (isCancellationPendingStatus(rawStatus)) return 'upcoming';
+  if (tab !== 'completed' && hasEnded(item.end_date)) return 'completed';
+  return tab;
 }
 
 function normalizeMaybeBookingId(value: unknown): string | null {
@@ -282,6 +312,20 @@ function countLabel(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function airlineNameFromFlightNumber(value?: string | null): string {
+  const prefix = (value ?? '').trim().match(/^[A-Z]+/)?.[0] ?? '';
+  switch (prefix) {
+    case 'VN':
+      return 'Vietnam Airlines';
+    case 'VJ':
+      return 'VietJet Air';
+    case 'QH':
+      return 'Bamboo Airways';
+    default:
+      return prefix ? `${prefix} Air` : 'Tripwise Air';
+  }
+}
+
 function cancellationDeadline(item: LeanItem, booking?: LeanBooking): Date {
   const bookedAt = parseDate(booking?.created_at) ?? parseDate(item.created_at) ?? new Date();
   const startDate = parseDate(item.start_date);
@@ -300,10 +344,14 @@ function cancellationPolicy(item: LeanItem, booking?: LeanBooking) {
   const deadline = cancellationDeadline(item, booking);
   const deadlineIso = deadline.toISOString();
   const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status);
+  const tab = effectiveItemTab(rawStatus, item);
   return {
     deadlineIso,
     deadlineLabel: formatDeadline(deadlineIso),
-    canCancel: isCancellableStatus(rawStatus) && Date.now() <= deadline.getTime(),
+    canCancel:
+      tab === 'upcoming' &&
+      isCancellableStatus(rawStatus) &&
+      Date.now() <= deadline.getTime(),
     isPending: isCancellationPendingStatus(rawStatus),
   };
 }
@@ -316,6 +364,9 @@ function cancellationPolicyLabel(item: LeanItem, booking: LeanBooking | undefine
   }
   if (isCancelledStatus(rawStatus)) {
     return 'This booking has been cancelled.';
+  }
+  if (effectiveItemTab(rawStatus, item) === 'completed') {
+    return 'This booking is completed and can no longer be cancelled.';
   }
   if (policy.canCancel) {
     return policy.deadlineLabel
@@ -410,7 +461,7 @@ export async function getMyTrips(
     const type = serviceTypeOf(item);
     const booking = bookingMap.get(item.booking_id);
     const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status) || 'PENDING';
-    const tab = normalizeItemStatus(rawStatus);
+    const tab = effectiveItemTab(rawStatus, item);
     const cancelPolicy = cancellationPolicy(item, booking);
     const amount =
       typeof item.total_price === 'number' && Number.isFinite(item.total_price)
@@ -578,6 +629,11 @@ export async function getMyTripDetail(
   let quantitySingular = 'guest';
   let quantityPlural = 'guests';
   let pricePerUnitTitle = 'Price per unit';
+  const itemExtras = item as unknown as {
+    cabin_class?: string | null;
+    seat_numbers?: string[] | null;
+    airline_name?: string | null;
+  };
 
   if (type === 'hotel') {
     const room =
@@ -626,7 +682,11 @@ export async function getMyTripDetail(
     const departure = flight ? airportMap.get(flight.departure_airport) : undefined;
     const arrival = flight ? airportMap.get(flight.arrival_airport) : undefined;
 
-    title = flight?.flight_number ? `Flight ${flight.flight_number}` : 'Flight booking';
+    const airlineName =
+      itemExtras.airline_name ?? (flight?.flight_number ? airlineNameFromFlightNumber(flight.flight_number) : null);
+    title = flight?.flight_number
+      ? `${airlineName ?? 'Flight'} ${flight.flight_number}`
+      : 'Flight booking';
     subtitle = flight
       ? `${departure?._id ?? flight.departure_airport} -> ${
           arrival?._id ?? flight.arrival_airport
@@ -667,7 +727,7 @@ export async function getMyTripDetail(
   }
 
   const rawStatus = normalizeRawStatus(item.item_status ?? booking.status) || 'PENDING';
-  const status = normalizeItemStatus(rawStatus);
+  const status = effectiveItemTab(rawStatus, item);
   const cancelPolicy = cancellationPolicy(item, booking);
   const nights = type === 'hotel' ? diffNights(startDate, endDate) : null;
   const quantity = Math.max(1, Math.round(finiteNumber(item.quantity, 1)));
@@ -686,6 +746,9 @@ export async function getMyTripDetail(
     statusLabel: itemStatusLabel(rawStatus, status),
     imageUrl,
     ticketCode: item.e_ticket_code ?? '',
+    cabinClass: itemExtras.cabin_class ?? null,
+    seatNumbers: Array.isArray(itemExtras.seat_numbers) ? itemExtras.seat_numbers : [],
+    airlineName: itemExtras.airline_name ?? null,
     dateLabel: formatDateRange(startDate, endDate),
     startDate,
     endDate,
@@ -767,6 +830,11 @@ export async function cancelMyTrip(
       cancelDeadline: bookingItem.cancellation_deadline ?? null,
       cancelDeadlineLabel: formatDeadline(bookingItem.cancellation_deadline ?? null),
     };
+  }
+
+  const rawStatus = normalizeRawStatus(bookingItem.item_status ?? booking.status) || 'PENDING';
+  if (effectiveItemTab(rawStatus, bookingItem) === 'completed') {
+    throw new MyTripsError(409, 'Completed trips can no longer be cancelled.');
   }
 
   if (!isCancellableStatus(bookingItem.item_status)) {

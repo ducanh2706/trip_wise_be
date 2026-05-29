@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import {
   getProviderOrders,
+  lookupOrderByTicketCode,
   parseOrderStatus,
   updateOrderStatus,
   type OrderStatus,
@@ -89,6 +90,31 @@ export async function acceptOrderHandler(
       return;
     }
 
+    res.json(order);
+  } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function lookupProviderTicketHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    const order = await lookupOrderByTicketCode({
+      code: req.params.code,
+      providerId,
+    });
+    if (!order) {
+      res.status(404).json({ message: 'Ticket code was not found for your provider account' });
+      return;
+    }
     res.json(order);
   } catch (error) {
     if (error instanceof ProviderAccessError) {

@@ -3,6 +3,7 @@ import {
   listAdminCancellationRequestsHandler,
   listAdminListingsHandler,
   listAdminProviderPayoutsHandler,
+  lookupAdminTicketHandler,
   listProviderApplicationsHandler,
   reviewProviderPayoutRequestsHandler,
   reviewCancellationRequestHandler,
@@ -13,6 +14,7 @@ import {
 const router = Router();
 
 router.get('/provider-applications', listProviderApplicationsHandler);
+router.get('/tickets/:code', lookupAdminTicketHandler);
 router.patch('/provider-applications/:userId/review', reviewProviderApplicationHandler);
 router.get('/listings', listAdminListingsHandler);
 router.patch('/listings/:listingId/review', reviewAdminListingHandler);

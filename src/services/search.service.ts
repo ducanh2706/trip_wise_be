@@ -167,6 +167,43 @@ function pickPrimaryImage(
   return null;
 }
 
+function normalizeSearchImage(value?: string | null): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const image = value.trim();
+  if (!image) {
+    return null;
+  }
+
+  if (image.startsWith('data:image/')) {
+    return image;
+  }
+
+  if (image.startsWith('http://') || image.startsWith('https://')) {
+    try {
+      const parsed = new URL(image);
+      if (parsed.hostname.toLowerCase() === 'cdn.tripwise.vn') {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    return image;
+  }
+
+  if (image.startsWith('/')) {
+    return image;
+  }
+
+  if (image.startsWith('uploads/')) {
+    return `/${image}`;
+  }
+
+  return null;
+}
+
 async function loadLocationMap(startIds: number[]): Promise<Map<number, LeanLocation>> {
   const locationMap = new Map<number, LeanLocation>();
   let pendingIds = Array.from(
@@ -540,7 +577,7 @@ export async function getSearchData(input: {
         id: hotel._id,
         name: hotel.name,
         locationLabel,
-        imageUrl: pickPrimaryImage(hotel.images, hotel.image),
+        imageUrl: normalizeSearchImage(pickPrimaryImage(hotel.images, hotel.image)),
         ratingLabel: hotel.star_rating.toFixed(1),
         priceLabel: formatVnd(cheapestRoomPrices.get(hotel._id) ?? null),
         route: `/service_details/${hotel._id}`,
@@ -603,7 +640,7 @@ export async function getSearchData(input: {
         subtitle,
         valueLabel: formatVnd(flight.base_price) ?? 'N/A',
         metaLabel: buildFlightMetaLabel(flight),
-        imageUrl: flight.image ?? DEFAULT_IMAGE,
+        imageUrl: normalizeSearchImage(flight.image) ?? DEFAULT_IMAGE,
       };
     })
     .filter((flight): flight is SearchFlightItem => flight !== null)
@@ -625,7 +662,7 @@ export async function getSearchData(input: {
         subtitle: locationLabel,
         valueLabel: formatVnd(tour.base_price) ?? 'N/A',
         metaLabel: tour.status ?? tour.type,
-        imageUrl: tour.image ?? DEFAULT_IMAGE,
+        imageUrl: normalizeSearchImage(tour.image) ?? DEFAULT_IMAGE,
       };
     })
     .filter((tour): tour is SearchTourItem => tour !== null)

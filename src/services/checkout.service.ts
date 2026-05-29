@@ -1,6 +1,9 @@
 import { randomUUID } from 'crypto';
 import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
+import { Activity } from '@/models/Activity.model';
+import { Airport } from '@/models/Airport.model';
+import { Flight } from '@/models/Flight.model';
 import { Hotel } from '@/models/Hotel.model';
 import { Payment } from '@/models/Payment.model';
 import { Provider } from '@/models/Provider.model';
@@ -28,19 +31,37 @@ export class CheckoutError extends Error {
 }
 
 interface ActiveListing {
+  serviceType: 'hotel' | 'flight' | 'activity';
   hotelId: number;
   roomId: number;
+  flightId: number | null;
+  activityId: number | null;
   hotelName: string;
   roomType: string;
   providerId: string;
   imageUrl: string | null;
   basePrice: number;
+  startDate: string | null;
+  endDate: string | null;
+  dateLocked: boolean;
+  quantityTitle: string;
+  unitTitle: string;
+  flightNumber: string | null;
+  airlineName: string | null;
+  departureAirportCode: string | null;
+  departureAirportName: string | null;
+  arrivalAirportCode: string | null;
+  arrivalAirportName: string | null;
+  availableSeats: number | null;
 }
 
 export interface CheckoutSummaryResponse {
   listing: {
     hotelId: number;
     roomId: number;
+    flightId: number | null;
+    activityId: number | null;
+    serviceType: 'hotel' | 'flight' | 'activity';
     title: string;
     subtitle: string;
     imageUrl: string | null;
@@ -48,6 +69,18 @@ export interface CheckoutSummaryResponse {
     endDate: string;
     nights: number;
     guests: number;
+    dateLocked: boolean;
+    quantityTitle: string;
+    unitTitle: string;
+    flightNumber: string | null;
+    airlineName: string | null;
+    departureAirportCode: string | null;
+    departureAirportName: string | null;
+    arrivalAirportCode: string | null;
+    arrivalAirportName: string | null;
+    availableSeats: number | null;
+    cabinClass: 'economy' | 'business';
+    cabinClassLabel: string;
   };
   pricing: {
     currency: string;
@@ -153,6 +186,58 @@ function hasInputValue(raw: unknown): boolean {
   return typeof raw === 'string' ? raw.trim().length > 0 : raw != null;
 }
 
+function normalizeServiceType(value: unknown): 'hotel' | 'flight' | 'activity' {
+  if (typeof value !== 'string') return 'hotel';
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'flight' || normalized === 'flights') return 'flight';
+  if (normalized === 'tour' || normalized === 'tours' || normalized === 'activity') {
+    return 'activity';
+  }
+  return 'hotel';
+}
+
+function normalizeCabinClass(value: unknown): 'economy' | 'business' {
+  if (typeof value !== 'string') return 'economy';
+  return value.trim().toLowerCase() === 'business' ? 'business' : 'economy';
+}
+
+function cabinClassLabel(value: 'economy' | 'business'): string {
+  return value === 'business' ? 'Business' : 'Economy';
+}
+
+function cabinMultiplier(value: 'economy' | 'business'): number {
+  return value === 'business' ? 1.8 : 1;
+}
+
+function airlineNameFromFlightNumber(value?: string | null): string {
+  const prefix = (value ?? '').trim().match(/^[A-Z]+/)?.[0] ?? '';
+  switch (prefix) {
+    case 'VN':
+      return 'Vietnam Airlines';
+    case 'VJ':
+      return 'VietJet Air';
+    case 'QH':
+      return 'Bamboo Airways';
+    default:
+      return prefix ? `${prefix} Air` : 'Tripwise Air';
+  }
+}
+
+function generateSeatNumbers(count: number, cabinClass: 'economy' | 'business'): string[] {
+  const seats: string[] = [];
+  const letters = cabinClass === 'business' ? ['A', 'C', 'D', 'F'] : ['A', 'B', 'C', 'D', 'E', 'F'];
+  const startRow = cabinClass === 'business' ? 1 : 12;
+  let cursor = Math.floor(Math.random() * letters.length);
+
+  for (let i = 0; i < count; i++) {
+    const row = startRow + Math.floor((cursor + i) / letters.length);
+    const letter = letters[(cursor + i) % letters.length];
+    seats.push(`${row}${letter}`);
+  }
+
+  return seats;
+}
+
 function nightsBetween(start: string, end: string): number {
   const s = new Date(`${start}T00:00:00.000Z`).getTime();
   const e = new Date(`${end}T00:00:00.000Z`).getTime();
@@ -161,6 +246,9 @@ function nightsBetween(start: string, end: string): number {
 }
 
 function resolveBookingDetails(input: {
+  serviceType?: 'hotel' | 'flight' | 'activity';
+  lockedStartDate?: string | null;
+  lockedEndDate?: string | null;
   startDate?: unknown;
   endDate?: unknown;
   guests?: unknown;
@@ -170,6 +258,40 @@ function resolveBookingDetails(input: {
   nights: number;
   guests: number;
 } {
+  if (input.serviceType === 'flight') {
+    const startDate = parseDateOnly(input.lockedStartDate) ?? defaultStartDate();
+    const endDate = parseDateOnly(input.lockedEndDate) ?? startDate;
+    const travelerCount = Number(input.guests);
+    if (hasInputValue(input.guests) && (!Number.isFinite(travelerCount) || travelerCount < 1)) {
+      throw new CheckoutError(400, 'At least 1 traveler is required');
+    }
+    return {
+      startDate,
+      endDate,
+      nights: 0,
+      guests: Math.max(1, Math.floor(travelerCount || 1)),
+    };
+  }
+
+  if (input.serviceType === 'activity') {
+    const startDate = parseDateOnly(input.startDate) ?? defaultStartDate();
+    const endDate = parseDateOnly(input.endDate) ?? startDate;
+    const today = toIsoDateOnly(new Date());
+    if (startDate < today) {
+      throw new CheckoutError(400, 'Tour date cannot be in the past');
+    }
+    const peopleCount = Number(input.guests);
+    if (hasInputValue(input.guests) && (!Number.isFinite(peopleCount) || peopleCount < 1)) {
+      throw new CheckoutError(400, 'At least 1 person is required');
+    }
+    return {
+      startDate,
+      endDate,
+      nights: 0,
+      guests: Math.max(1, Math.floor(peopleCount || 1)),
+    };
+  }
+
   const startDate = parseDateOnly(input.startDate);
   const endDate = parseDateOnly(input.endDate);
   if (hasInputValue(input.startDate) && !startDate) {
@@ -207,9 +329,93 @@ function ticketCode(): string {
 }
 
 async function resolveListing(
+  serviceTypeInput?: unknown,
   hotelIdInput?: unknown,
   roomIdInput?: unknown,
+  flightIdInput?: unknown,
+  activityIdInput?: unknown,
 ): Promise<ActiveListing> {
+  const serviceType = normalizeServiceType(serviceTypeInput);
+  if (serviceType === 'flight') {
+    const flightId = Number(flightIdInput);
+    if (!Number.isInteger(flightId) || flightId <= 0) {
+      throw new CheckoutError(400, 'Please select a flight to book');
+    }
+    const flight = await Flight.findOne({ _id: flightId, deleted_at: null }).lean();
+    if (!flight) throw new CheckoutError(404, 'Flight not found');
+    const [departure, arrival] = await Promise.all([
+      Airport.findById(flight.departure_airport).select({ _id: 1, name: 1 }).lean(),
+      Airport.findById(flight.arrival_airport).select({ _id: 1, name: 1 }).lean(),
+    ]);
+
+    return {
+      serviceType: 'flight',
+      hotelId: 0,
+      roomId: 0,
+      flightId: flight._id,
+      activityId: null,
+      hotelName: `${departure?._id ?? flight.departure_airport} -> ${
+        arrival?._id ?? flight.arrival_airport
+      }`,
+      roomType: `${flight.flight_number} • ${departure?.name ?? flight.departure_airport} to ${
+        arrival?.name ?? flight.arrival_airport
+      }`,
+      providerId: flight.provider_id,
+      imageUrl: flight.image ?? null,
+      basePrice: flight.base_price ?? 0,
+      startDate: flight.departure_time ?? null,
+      endDate: flight.arrival_time ?? flight.departure_time ?? null,
+      dateLocked: true,
+      quantityTitle: 'Travelers',
+      unitTitle: 'Price per ticket',
+      flightNumber: flight.flight_number,
+      airlineName: airlineNameFromFlightNumber(flight.flight_number),
+      departureAirportCode: departure?._id ?? flight.departure_airport,
+      departureAirportName: departure?.name ?? flight.departure_airport,
+      arrivalAirportCode: arrival?._id ?? flight.arrival_airport,
+      arrivalAirportName: arrival?.name ?? flight.arrival_airport,
+      availableSeats: flight.available_seats ?? null,
+    };
+  }
+
+  if (serviceType === 'activity') {
+    const activityId = Number(activityIdInput);
+    if (!Number.isInteger(activityId) || activityId <= 0) {
+      throw new CheckoutError(400, 'Please select a tour to book');
+    }
+    const activity = await Activity.findOne({
+      _id: activityId,
+      deleted_at: null,
+      status: 'LIVE',
+    }).lean();
+    if (!activity) throw new CheckoutError(404, 'Tour not found');
+
+    return {
+      serviceType: 'activity',
+      hotelId: 0,
+      roomId: 0,
+      flightId: null,
+      activityId: activity._id,
+      hotelName: activity.title,
+      roomType: `${activity.category ?? activity.type ?? 'Tour'} experience`,
+      providerId: activity.provider_id,
+      imageUrl: activity.image ?? null,
+      basePrice: activity.base_price ?? 0,
+      startDate: null,
+      endDate: null,
+      dateLocked: false,
+      quantityTitle: 'People',
+      unitTitle: 'Price per person',
+      flightNumber: null,
+      airlineName: null,
+      departureAirportCode: null,
+      departureAirportName: null,
+      arrivalAirportCode: null,
+      arrivalAirportName: null,
+      availableSeats: null,
+    };
+  }
+
   const hotelId = Number(hotelIdInput);
   const roomId = Number(roomIdInput);
 
@@ -245,8 +451,11 @@ async function resolveListing(
   }
 
   return {
+    serviceType: 'hotel',
     hotelId: hotel._id,
     roomId: room._id,
+    flightId: null,
+    activityId: null,
     hotelName: hotel.name,
     roomType: room.room_type ?? 'Room',
     providerId: hotel.provider_id,
@@ -256,11 +465,23 @@ async function resolveListing(
       hotel.image ??
       null,
     basePrice: room.base_price ?? 0,
+    startDate: null,
+    endDate: null,
+    dateLocked: false,
+    quantityTitle: 'Guests',
+    unitTitle: 'Price per night',
+    flightNumber: null,
+    airlineName: null,
+    departureAirportCode: null,
+    departureAirportName: null,
+    arrivalAirportCode: null,
+    arrivalAirportName: null,
+    availableSeats: null,
   };
 }
 
-function pricing(basePrice: number, nights: number) {
-  const subtotal = Math.round(basePrice * nights);
+function pricing(basePrice: number, units: number) {
+  const subtotal = Math.round(basePrice * units);
   const taxes = Math.round(subtotal * 0.08);
   const fees = Math.round(subtotal * 0.02);
   const total = subtotal + taxes + fees;
@@ -447,27 +668,52 @@ async function settleSuccessfulCheckoutPayment(input: {
 
 export async function getCheckoutSummary(input: {
   userId: string;
+  serviceType?: unknown;
   hotelId?: unknown;
   roomId?: unknown;
+  flightId?: unknown;
+  activityId?: unknown;
   startDate?: unknown;
   endDate?: unknown;
   guests?: unknown;
+  cabinClass?: unknown;
 }): Promise<CheckoutSummaryResponse> {
   const [listing, user, wallet, pointSummary] = await Promise.all([
-    resolveListing(input.hotelId, input.roomId),
+    resolveListing(input.serviceType, input.hotelId, input.roomId, input.flightId, input.activityId),
     User.findById(input.userId).lean(),
     Wallet.findOne({ user_id: input.userId }).lean(),
     calculateCompletedPoints(input.userId),
   ]);
 
-  const { startDate, endDate, nights, guests } = resolveBookingDetails(input);
-  const bill = pricing(listing.basePrice, nights);
+  const { startDate, endDate, nights, guests } = resolveBookingDetails({
+    ...input,
+    serviceType: listing.serviceType,
+    lockedStartDate: listing.startDate,
+    lockedEndDate: listing.endDate,
+  });
+  if (
+    listing.serviceType === 'flight' &&
+    listing.availableSeats != null &&
+    guests > listing.availableSeats
+  ) {
+    throw new CheckoutError(400, `Only ${listing.availableSeats} seat(s) available`);
+  }
+  const cabinClass = normalizeCabinClass(input.cabinClass);
+  const basePrice =
+    listing.serviceType === 'flight'
+      ? Math.round(listing.basePrice * cabinMultiplier(cabinClass))
+      : listing.basePrice;
+  const billableUnits = listing.serviceType === 'hotel' ? nights : guests;
+  const bill = pricing(basePrice, billableUnits);
   const pointsMaxRedeem = maxRedeemablePoints(bill.total, pointSummary.points);
 
   return {
     listing: {
       hotelId: listing.hotelId,
       roomId: listing.roomId,
+      flightId: listing.flightId,
+      activityId: listing.activityId,
+      serviceType: listing.serviceType,
       title: listing.hotelName,
       subtitle: listing.roomType,
       imageUrl: listing.imageUrl,
@@ -475,6 +721,18 @@ export async function getCheckoutSummary(input: {
       endDate,
       nights,
       guests,
+      dateLocked: listing.dateLocked,
+      quantityTitle: listing.quantityTitle,
+      unitTitle: listing.unitTitle,
+      flightNumber: listing.flightNumber,
+      airlineName: listing.airlineName,
+      departureAirportCode: listing.departureAirportCode,
+      departureAirportName: listing.departureAirportName,
+      arrivalAirportCode: listing.arrivalAirportCode,
+      arrivalAirportName: listing.arrivalAirportName,
+      availableSeats: listing.availableSeats,
+      cabinClass,
+      cabinClassLabel: cabinClassLabel(cabinClass),
     },
     pricing: {
       currency: 'USD',
@@ -511,26 +769,54 @@ export async function getCheckoutSummary(input: {
 
 export async function completeCheckout(input: {
   userId: string;
+  serviceType?: unknown;
   hotelId?: unknown;
   roomId?: unknown;
+  flightId?: unknown;
+  activityId?: unknown;
   startDate?: unknown;
   endDate?: unknown;
   guests?: unknown;
   paymentMethod?: unknown;
   usePoints?: unknown;
   agreeToTerms?: unknown;
+  cabinClass?: unknown;
 }): Promise<CheckoutCompleteResponse> {
   if (input.agreeToTerms !== true) {
     throw new CheckoutError(400, 'Please agree to booking terms to continue');
   }
 
-  const listing = await resolveListing(input.hotelId, input.roomId);
-  const { startDate, endDate, nights, guests } = resolveBookingDetails(input);
+  const listing = await resolveListing(
+    input.serviceType,
+    input.hotelId,
+    input.roomId,
+    input.flightId,
+    input.activityId,
+  );
+  const { startDate, endDate, nights, guests } = resolveBookingDetails({
+    ...input,
+    serviceType: listing.serviceType,
+    lockedStartDate: listing.startDate,
+    lockedEndDate: listing.endDate,
+  });
   const paymentMethod =
     typeof input.paymentMethod === 'string' ? input.paymentMethod.toLowerCase() : 'card';
   const paymentMethodDb =
     paymentMethod === 'wallet' ? 'WALLET' : paymentMethod === 'paypal' ? 'PAYPAL' : 'CREDIT_CARD';
-  const bill = pricing(listing.basePrice, nights);
+  if (
+    listing.serviceType === 'flight' &&
+    listing.availableSeats != null &&
+    guests > listing.availableSeats
+  ) {
+    throw new CheckoutError(400, `Only ${listing.availableSeats} seat(s) available`);
+  }
+  const cabinClass = normalizeCabinClass(input.cabinClass);
+  const basePrice =
+    listing.serviceType === 'flight'
+      ? Math.round(listing.basePrice * cabinMultiplier(cabinClass))
+      : listing.basePrice;
+  const billableUnits = listing.serviceType === 'hotel' ? nights : guests;
+  const bill = pricing(basePrice, billableUnits);
   const pointSummary = await calculateCompletedPoints(input.userId);
   const pointsDiscount =
     input.usePoints === true ? maxRedeemablePoints(bill.total, pointSummary.points) : 0;
@@ -572,13 +858,13 @@ export async function completeCheckout(input: {
       _id: bookingItemId,
       booking_id: bookingId,
       provider_id: listing.providerId,
-      room_id: listing.roomId,
-      flight_id: null,
-      activity_id: null,
+      room_id: listing.serviceType === 'hotel' ? listing.roomId : null,
+      flight_id: listing.serviceType === 'flight' ? listing.flightId : null,
+      activity_id: listing.serviceType === 'activity' ? listing.activityId : null,
       start_date: startDate,
       end_date: endDate,
       quantity: guests,
-      price_per_unit: listing.basePrice,
+      price_per_unit: basePrice,
       total_price: amountDue,
       gross_amount: settlement.grossAmount,
       commission_rate: env.platformCommissionRate,
@@ -589,6 +875,10 @@ export async function completeCheckout(input: {
       paid_to_provider_at: null,
       item_status: paymentMethodDb === 'WALLET' ? 'PENDING' : 'PENDING_PAYMENT',
       e_ticket_code: ticketCode(),
+      cabin_class: listing.serviceType === 'flight' ? cabinClassLabel(cabinClass) : null,
+      seat_numbers:
+        listing.serviceType === 'flight' ? generateSeatNumbers(guests, cabinClass) : undefined,
+      airline_name: listing.serviceType === 'flight' ? listing.airlineName : null,
       created_at: now,
       updated_at: now,
     }),
@@ -605,6 +895,16 @@ export async function completeCheckout(input: {
       updated_at: now,
     } as any),
   ]);
+
+  if (listing.serviceType === 'flight' && listing.flightId != null) {
+    await Flight.updateOne(
+      { _id: listing.flightId, deleted_at: null },
+      {
+        $inc: { available_seats: -guests },
+        $set: { updated_at: now },
+      },
+    );
+  }
 
   if (paymentMethodDb === 'WALLET') {
     await settleSuccessfulCheckoutPayment({
@@ -692,6 +992,15 @@ export async function completeCheckout(input: {
         { _id: bookingId, user_id: input.userId },
         { $set: { status: 'FAILED', updated_at: new Date().toISOString() } },
       ),
+      listing.serviceType === 'flight' && listing.flightId != null
+        ? Flight.updateOne(
+            { _id: listing.flightId, deleted_at: null },
+            {
+              $inc: { available_seats: guests },
+              $set: { updated_at: new Date().toISOString() },
+            },
+          )
+        : Promise.resolve(),
     ]);
     const message = error instanceof Error ? error.message : 'Could not create PayOS payment link';
     throw new CheckoutError(502, message);

@@ -84,6 +84,10 @@ export interface ProviderOrderItem {
   updatedAt: string | null;
 }
 
+export interface TicketLookupResult extends ProviderOrderItem {
+  ticketCode: string;
+}
+
 export interface ProviderOrdersResponse {
   status: OrderStatus | 'all';
   counts: Record<OrderStatus, number>;
@@ -484,4 +488,27 @@ export async function updateOrderStatus(
 
   const context = await buildContext([item]);
   return toOrderItem(item, context);
+}
+
+export async function lookupOrderByTicketCode(input: {
+  code: unknown;
+  providerId?: string;
+}): Promise<TicketLookupResult | null> {
+  if (typeof input.code !== 'string' || input.code.trim().length === 0) {
+    return null;
+  }
+
+  const normalized = input.code.trim().toUpperCase();
+  const item = (await BookingItem.findOne({
+    e_ticket_code: normalized,
+    ...(input.providerId ? { provider_id: input.providerId } : {}),
+  }).lean()) as LeanBookingItem | null;
+
+  if (!item) return null;
+
+  const context = await buildContext([item]);
+  return {
+    ...toOrderItem(item, context),
+    ticketCode: item.e_ticket_code ?? normalized,
+  };
 }

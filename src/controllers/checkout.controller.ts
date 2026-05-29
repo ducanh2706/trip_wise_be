@@ -28,11 +28,15 @@ export async function getCheckoutSummaryHandler(
     res.json(
       await getCheckoutSummary({
         userId: req.auth!.userId,
+        serviceType: req.query.type ?? req.query.serviceType,
         hotelId: req.query.hotelId,
         roomId: req.query.roomId,
+        flightId: req.query.flightId,
+        activityId: req.query.activityId,
         startDate: req.query.startDate,
         endDate: req.query.endDate,
         guests: req.query.guests,
+        cabinClass: req.query.cabinClass,
       }),
     );
   } catch (error) {
@@ -50,14 +54,18 @@ export async function completeCheckoutHandler(
     res.status(201).json(
       await completeCheckout({
         userId: req.auth!.userId,
+        serviceType: body.type ?? body.serviceType,
         hotelId: body.hotelId,
         roomId: body.roomId,
+        flightId: body.flightId,
+        activityId: body.activityId,
         startDate: body.startDate,
         endDate: body.endDate,
         guests: body.guests,
         paymentMethod: body.paymentMethod,
         usePoints: body.usePoints,
         agreeToTerms: body.agreeToTerms,
+        cabinClass: body.cabinClass,
       }),
     );
   } catch (error) {
