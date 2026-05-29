@@ -553,6 +553,25 @@ async function notifyProviderBookingPending(providerId: string, hotelName: strin
   });
 }
 
+/** Money-aware detail for the booking-received notification, e.g.
+ *  "$420 charged from your wallet · 200 points redeemed". Empty when there is
+ *  nothing financial to report. */
+function describeBookingCharge(
+  amountDue: number,
+  pointsDiscount: number,
+  paymentMethod?: string,
+): string {
+  const parts: string[] = [];
+  if (amountDue > 0) {
+    const from = (paymentMethod ?? '').toUpperCase() === 'WALLET' ? ' from your wallet' : '';
+    parts.push(`${formatCurrency(amountDue)} charged${from}`);
+  }
+  if (pointsDiscount > 0) {
+    parts.push(`${pointsDiscount.toLocaleString('en-US')} points redeemed`);
+  }
+  return parts.join(' · ');
+}
+
 async function settleSuccessfulCheckoutPayment(input: {
   userId: string;
   bookingId: string;
@@ -563,6 +582,7 @@ async function settleSuccessfulCheckoutPayment(input: {
   pointsDiscount: number;
   hotelName: string;
   transactionId: string;
+  paymentMethod?: string;
 }): Promise<void> {
   const now = new Date().toISOString();
 
@@ -655,11 +675,18 @@ async function settleSuccessfulCheckoutPayment(input: {
     }
   }
 
+  const charge = describeBookingCharge(
+    input.amountDue,
+    input.pointsDiscount,
+    input.paymentMethod,
+  );
   await createNotification({
     userId: input.userId,
     type: 'BOOKING',
     title: 'Booking request received',
-    body: `${input.hotelName} is waiting for provider confirmation.`,
+    body: charge
+      ? `${input.hotelName} — ${charge}. Waiting for provider confirmation.`
+      : `${input.hotelName} is waiting for provider confirmation.`,
     actionRoute: `/payment_success?bookingId=${input.bookingId}&paymentId=${input.paymentId}`,
   });
 
@@ -917,6 +944,7 @@ export async function completeCheckout(input: {
       pointsDiscount,
       hotelName: listing.hotelName,
       transactionId: `TX-${Date.now()}`,
+      paymentMethod: 'WALLET',
     });
 
     return {
@@ -1151,6 +1179,7 @@ export async function confirmCheckoutPayOSPayment(input: {
       typeof booking.discount_amount === 'number' ? Math.max(0, booking.discount_amount) : 0,
     hotelName,
     transactionId: transactionId || `PAYOS-${Date.now()}`,
+    paymentMethod: 'PAYOS',
   });
 
   return {
