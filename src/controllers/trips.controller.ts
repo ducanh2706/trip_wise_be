@@ -43,13 +43,7 @@ export async function addTripItemHandler(
 ): Promise<void> {
   try {
     const tripId = String(req.params.id);
-    const { dayIndex, activityId } = req.body ?? {};
-    const updated = await addTripItem(
-      req.auth!.userId,
-      tripId,
-      Number(dayIndex),
-      Number(activityId),
-    );
+    const updated = await addTripItem(req.auth!.userId, tripId, req.body ?? {});
     res.status(201).json(updated);
   } catch (err) {
     if (err instanceof TripError) {

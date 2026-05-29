@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { Trip } from '@/models/Trip.model';
 import { Activity } from '@/models/Activity.model';
+import { Airport } from '@/models/Airport.model';
+import { Booking } from '@/models/Booking.model';
+import { BookingItem, type BookingItemDoc } from '@/models/BookingItem.model';
+import { Flight } from '@/models/Flight.model';
+import { Hotel } from '@/models/Hotel.model';
 import { Location } from '@/models/Location.model';
+import { Room } from '@/models/Room.model';
 import { createNotification } from '@/services/notifications.service';
 
 export interface TripCompanion {
@@ -57,6 +63,13 @@ export interface CreateTripInput {
 export interface UpdateTripItemTimeInput {
   dayIndex?: unknown;
   itemIndex?: unknown;
+  time?: unknown;
+}
+
+export interface AddTripItemInput {
+  dayIndex?: unknown;
+  activityId?: unknown;
+  bookingItemId?: unknown;
   time?: unknown;
 }
 
@@ -183,6 +196,75 @@ async function resolveLocationName(id: number): Promise<string> {
   return parent ? `${loc.name}, ${parent.name}` : loc.name;
 }
 
+function bookingItemIdValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function firstCategory(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  if (raw == 'FOOD' || raw == 'SIGHTSEEING' || raw == 'TRANSPORT' || raw == 'OUTDOORS') {
+    return raw;
+  }
+  return 'SIGHTSEEING';
+}
+
+async function resolvePlannedItemFromBooking(userId: string, bookingItemId: string) {
+  const item = (await BookingItem.findById(bookingItemId).lean()) as BookingItemDoc | null;
+  if (!item) throw new TripError(404, 'Booked item not found');
+
+  const booking = await Booking.findOne({ _id: item.booking_id, user_id: userId }).lean();
+  if (!booking) throw new TripError(403, 'This booked item does not belong to your account');
+
+  if (item.activity_id != null) {
+    const activity = await Activity.findOne({
+      _id: item.activity_id,
+      status: 'LIVE',
+      deleted_at: null,
+    }).lean();
+    if (!activity) throw new TripError(404, 'Booked activity is no longer available');
+    return {
+      title: activity.title,
+      location: await resolveLocationName(activity.location_id),
+      category: firstCategory(activity.category),
+      activityId: activity._id as number,
+      bookingItemId: item._id,
+    };
+  }
+
+  if (item.flight_id != null) {
+    const flight = await Flight.findOne({ _id: item.flight_id, deleted_at: null }).lean();
+    if (!flight) throw new TripError(404, 'Booked flight is no longer available');
+    const [dep, arr] = await Promise.all([
+      Airport.findById(flight.departure_airport).lean(),
+      Airport.findById(flight.arrival_airport).lean(),
+    ]);
+    return {
+      title: flight.flight_number ? `Flight ${flight.flight_number}` : 'Flight',
+      location: `${dep?._id ?? flight.departure_airport} -> ${arr?._id ?? flight.arrival_airport}`,
+      category: 'TRANSPORT',
+      activityId: null,
+      bookingItemId: item._id,
+    };
+  }
+
+  if (item.room_id != null) {
+    const room = await Room.findOne({ _id: item.room_id, deleted_at: null }).lean();
+    if (!room) throw new TripError(404, 'Booked room is no longer available');
+    const hotel = await Hotel.findOne({ _id: room.hotel_id, deleted_at: null }).lean();
+    return {
+      title: hotel?.name ?? room.room_type ?? 'Hotel stay',
+      location: hotel?.address ?? '',
+      category: 'SIGHTSEEING',
+      activityId: null,
+      bookingItemId: item._id,
+    };
+  }
+
+  throw new TripError(400, 'Booked item is not supported for planning');
+}
+
 export async function getTrips(userId: string): Promise<{ trips: TripSummary[] }> {
   const docs = await Trip.find({ user_id: userId }).lean();
   const trips = docs
@@ -237,15 +319,25 @@ export async function createTrip(userId: string, input: CreateTripInput): Promis
   return mapTrip(doc.toJSON());
 }
 
-/** Append a real activity as a timed item on one day of a trip. */
+/** Append an item from booked tickets or catalog activity to one day of a trip. */
 export async function addTripItem(
   userId: string,
   tripId: string,
-  dayIndex: number,
-  activityId: number,
+  input: AddTripItemInput,
 ): Promise<TripSummary> {
-  if (!tripId || !Number.isInteger(dayIndex) || !Number.isInteger(activityId)) {
-    throw new TripError(400, 'tripId, dayIndex and activityId are required');
+  const dayIndex = Number(input.dayIndex);
+  const activityId = Number(input.activityId);
+  const bookingItemId = bookingItemIdValue(input.bookingItemId);
+  const customTime = input.time == null ? null : parseTime(input.time);
+
+  if (!tripId || !Number.isInteger(dayIndex)) {
+    throw new TripError(400, 'tripId and dayIndex are required');
+  }
+  if (input.time != null && customTime == null) {
+    throw new TripError(400, 'Time must be HH:mm');
+  }
+  if (!bookingItemId && !Number.isInteger(activityId)) {
+    throw new TripError(400, 'Provide either bookingItemId or activityId');
   }
 
   const trip = await Trip.findOne({
@@ -254,13 +346,6 @@ export async function addTripItem(
   }).lean();
   if (!trip) throw new TripError(404, 'Trip not found');
 
-  const activity = await Activity.findOne({
-    _id: activityId,
-    status: 'LIVE',
-    deleted_at: null,
-  }).lean();
-  if (!activity) throw new TripError(404, 'Activity not found');
-
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   const day = (trip.days ?? []).find(
     /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -268,14 +353,42 @@ export async function addTripItem(
   );
   if (!day) throw new TripError(400, `Day ${dayIndex} does not exist`);
 
+  const source = bookingItemId
+    ? await resolvePlannedItemFromBooking(userId, bookingItemId)
+    : await (async () => {
+        const activity = await Activity.findOne({
+          _id: activityId,
+          status: 'LIVE',
+          deleted_at: null,
+        }).lean();
+        if (!activity) throw new TripError(404, 'Activity not found');
+        return {
+          title: activity.title,
+          location: await resolveLocationName(activity.location_id),
+          category: firstCategory(activity.category),
+          activityId: activity._id as number,
+          bookingItemId: null,
+        };
+      })();
+
+  if (source.bookingItemId != null) {
+    const exists = (trip.days ?? []).some((d: any) =>
+      (d.items ?? []).some((it: any) => it.booking_item_id === source.bookingItemId),
+    );
+    if (exists) {
+      throw new TripError(409, 'This booked ticket is already in your plan');
+    }
+  }
+
   const count = Array.isArray(day.items) ? day.items.length : 0;
-  const time = TIME_SLOTS[Math.min(count, TIME_SLOTS.length - 1)];
+  const time = customTime ?? TIME_SLOTS[Math.min(count, TIME_SLOTS.length - 1)];
   const newItem = {
     time,
-    title: activity.title,
-    location_name: await resolveLocationName(activity.location_id),
-    category: activity.category ?? 'SIGHTSEEING',
-    activity_id: activity._id,
+    title: source.title,
+    location_name: source.location,
+    category: source.category,
+    activity_id: source.activityId,
+    booking_item_id: source.bookingItemId,
     companions: [],
   };
 
@@ -291,8 +404,7 @@ export async function addTripItem(
     userId,
     type: 'TRIP',
     title: 'Activity added to your trip',
-    // dayIndex is the real 1-based day_index (no +1).
-    body: `"${activity.title}" was added to day ${dayIndex}.`,
+    body: `"${source.title}" was added to day ${dayIndex}.`,
     actionRoute: `/trip_planner_timeline?id=${tripId}`,
   });
 

@@ -30,6 +30,7 @@ type LeanActivity = Pick<ActivityDoc, '_id' | 'title' | 'image' | 'type'>;
 export interface MyTripCard {
   id: string;
   bookingId: string;
+  activityId: number | null;
   title: string;
   subtitle: string;
   serviceType: ServiceType;
@@ -474,6 +475,7 @@ export async function getMyTrips(
       return {
         id: item._id,
         bookingId: item.booking_id,
+        activityId: item.activity_id ?? null,
         title: hotel?.name ?? 'Hotel booking',
         subtitle: room?.room_type
           ? `${room.room_type} • ${hotel?.address ?? 'Tripwise listing'}`
@@ -502,6 +504,7 @@ export async function getMyTrips(
       return {
         id: item._id,
         bookingId: item.booking_id,
+        activityId: item.activity_id ?? null,
         title: flight?.flight_number
           ? `Flight ${flight.flight_number}`
           : 'Flight booking',
@@ -529,6 +532,7 @@ export async function getMyTrips(
     return {
       id: item._id,
       bookingId: item.booking_id,
+      activityId: item.activity_id ?? null,
       title: activity?.title ?? 'Activity booking',
       subtitle: activity?.type ? `${activity.type} activity` : 'Activity experience',
       serviceType: 'activity',
