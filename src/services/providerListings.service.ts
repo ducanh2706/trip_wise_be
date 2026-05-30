@@ -2,8 +2,13 @@ import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { Location } from '@/models/Location.model';
 import { Payment } from '@/models/Payment.model';
+import { Review } from '@/models/Review.model';
 import { Room } from '@/models/Room.model';
 import { invalidateHotelDetailCache } from '@/services/hotels.service';
+import {
+  getHotelReviewSummary,
+  ReviewResponse,
+} from '@/services/reviews.service';
 
 type ListingStatus = 'active' | 'inactive' | 'pending';
 type AnalyticsPeriod = '7d' | '30d' | '90d' | '1y';
@@ -49,6 +54,9 @@ export interface ProviderListingDetail {
   bathrooms: number;
   maxGuests: number;
   amenities: string[];
+  rating: number;
+  reviewCount: number;
+  reviews: ReviewResponse[];
 }
 
 export interface ProviderListingAnalytics {
@@ -334,6 +342,8 @@ export async function getProviderListingDetail(
     : [];
   const imageUrl = pickImage(room?.image ?? null, images[0] ?? null, hotel.image ?? null);
 
+  const reviewSummary = await getHotelReviewSummary(id, 5);
+
   return {
     id,
     title: textValue(hotel.name, 'Untitled listing'),
@@ -353,6 +363,73 @@ export async function getProviderListingDetail(
     amenities: Array.isArray(hotel.amenities)
       ? hotel.amenities.filter((x): x is string => typeof x === 'string')
       : [],
+    rating: reviewSummary.average,
+    reviewCount: reviewSummary.count,
+    reviews: reviewSummary.preview,
+  };
+}
+
+function cleanProviderReply(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+export async function replyToProviderListingReview(
+  providerId: string,
+  listingIdRaw: unknown,
+  reviewIdRaw: unknown,
+  input: Record<string, unknown>,
+): Promise<ReviewResponse> {
+  const listingId = Number(listingIdRaw);
+  const reviewId = Number(reviewIdRaw);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    throw new ProviderListingError(400, 'Invalid listing id');
+  }
+  if (!Number.isInteger(reviewId) || reviewId <= 0) {
+    throw new ProviderListingError(400, 'Invalid review id');
+  }
+
+  const reply = cleanProviderReply(input.reply);
+  if (reply.length === 0) {
+    throw new ProviderListingError(400, 'Reply cannot be empty.');
+  }
+  if (reply.length > 1000) {
+    throw new ProviderListingError(400, 'Reply is too long.');
+  }
+
+  const hotel = await Hotel.findOne({
+    _id: listingId,
+    provider_id: providerId,
+    deleted_at: null,
+  })
+    .select({ _id: 1 })
+    .lean();
+  if (!hotel) throw new ProviderListingError(404, 'Listing not found');
+
+  const updated = await Review.findOneAndUpdate(
+    { _id: reviewId, hotel_id: listingId, deleted_at: null },
+    {
+      $set: {
+        provider_reply: reply,
+        provider_replied_at: new Date().toISOString(),
+      },
+    },
+    { new: true },
+  ).lean();
+
+  if (!updated) throw new ProviderListingError(404, 'Review not found');
+  await invalidateHotelDetailCache(listingId);
+
+  return {
+    id: updated._id,
+    authorName: updated.author_name,
+    authorImage: updated.author_image ?? null,
+    rating: updated.rating,
+    comment: updated.comment,
+    providerReply: updated.provider_reply ?? null,
+    providerRepliedAt: updated.provider_replied_at ?? null,
+    tripType: updated.trip_type ?? null,
+    createdAt: updated.created_at ?? null,
   };
 }
 

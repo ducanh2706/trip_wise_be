@@ -10,6 +10,8 @@ const reviewSchema = new Schema(
     author_image: { type: String, default: null },
     rating: { type: Number, required: true },
     comment: { type: String, required: true },
+    provider_reply: { type: String, default: null },
+    provider_replied_at: { type: String, default: null },
     trip_type: { type: String, default: null },
     created_at: { type: String },
     deleted_at: { type: String, default: null },

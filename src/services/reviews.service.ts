@@ -11,6 +11,8 @@ export interface ReviewResponse {
   authorImage: string | null;
   rating: number;
   comment: string;
+  providerReply: string | null;
+  providerRepliedAt: string | null;
   tripType: string | null;
   createdAt: string | null;
 }
@@ -49,6 +51,8 @@ function mapReview(doc: ReviewDoc): ReviewResponse {
     authorImage: doc.author_image ?? null,
     rating: doc.rating,
     comment: doc.comment,
+    providerReply: doc.provider_reply ?? null,
+    providerRepliedAt: doc.provider_replied_at ?? null,
     tripType: doc.trip_type ?? null,
     createdAt: doc.created_at ?? null,
   };

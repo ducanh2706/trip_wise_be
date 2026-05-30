@@ -59,10 +59,13 @@ export async function createMyTripReviewHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const bookingItemId = Array.isArray(req.params.bookingItemId)
+      ? req.params.bookingItemId[0]
+      : req.params.bookingItemId;
     res.status(201).json(
       await createHotelReview({
         userId: req.auth!.userId,
-        bookingItemId: req.params.bookingItemId,
+        bookingItemId,
         rating: req.body?.rating,
         comment: req.body?.comment,
       }),

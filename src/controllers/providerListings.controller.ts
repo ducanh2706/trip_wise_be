@@ -6,6 +6,7 @@ import {
   getProviderListingAnalytics,
   getProviderListingDetail,
   listProviderListings,
+  replyToProviderListingReview,
   updateProviderListing,
 } from '@/services/providerListings.service';
 import { ProviderAccessError, resolveProviderIdForUser } from '@/services/providerAccess.service';
@@ -77,6 +78,26 @@ export async function updateProviderListingHandler(
     const providerId = await resolveProviderIdForUser(req.auth!.userId);
     const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     res.json(await updateProviderListing(providerId, req.params.id, req.body ?? {}, publicBaseUrl));
+  } catch (error) {
+    handleProviderListingError(error, res, next);
+  }
+}
+
+export async function replyToProviderListingReviewHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    res.json(
+      await replyToProviderListingReview(
+        providerId,
+        req.params.id,
+        req.params.reviewId,
+        req.body ?? {},
+      ),
+    );
   } catch (error) {
     handleProviderListingError(error, res, next);
   }
