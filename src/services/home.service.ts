@@ -10,6 +10,7 @@ import {
   type HomeTrendingOverrideDoc,
 } from '@/models/HomeContent.model';
 import { Location, type LocationDoc } from '@/models/Location.model';
+import { Provider } from '@/models/Provider.model';
 import { Room } from '@/models/Room.model';
 import { getHotelReviewStats } from '@/services/reviews.service';
 
@@ -46,6 +47,7 @@ type LeanHotel = Pick<
   | 'images'
   | 'status'
   | 'listing_status'
+  | 'provider_id'
 > & {
   reviewed_at?: string | null;
 };
@@ -68,12 +70,15 @@ interface BaseHomeHotel {
 interface HomeSourceHotel extends BaseHomeHotel {
   hasImage: boolean;
   isApproved: boolean;
+  isVip: boolean;
   reviewedAtTs: number;
 }
 
 function keepNewestApprovedFirst(items: HomeSourceHotel[]): HomeSourceHotel[] {
   if (items.length <= 1) return items;
-  const newestApproved = items.find((item) => item.isApproved && item.reviewedAtTs > 0);
+  const newestApproved =
+    items.find((item) => item.isApproved && item.isVip && item.reviewedAtTs > 0) ??
+    items.find((item) => item.isApproved && item.reviewedAtTs > 0);
   if (!newestApproved) return items;
   return [
     newestApproved,
@@ -420,6 +425,11 @@ function compareHomePriority(a: HomeSourceHotel, b: HomeSourceHotel): number {
     return approvedDelta;
   }
 
+  const vipDelta = Number(b.isVip) - Number(a.isVip);
+  if (vipDelta !== 0) {
+    return vipDelta;
+  }
+
   if (b.reviewedAtTs !== a.reviewedAtTs) {
     return b.reviewedAtTs - a.reviewedAtTs;
   }
@@ -712,12 +722,24 @@ async function getHomeConfig(): Promise<HomeContentDoc> {
   return mergedConfig;
 }
 
+async function getEliteProviderIds(providerIds: string[]): Promise<Set<string>> {
+  if (providerIds.length === 0) return new Set();
+  const providers = await Provider.find({
+    _id: { $in: Array.from(new Set(providerIds)) },
+    $or: [{ status: /^ELITE$/i }, { vip_plan: /^elite$/i }],
+  })
+    .select({ _id: 1 })
+    .lean();
+  return new Set(providers.map((provider) => provider._id));
+}
+
 export async function getHomeData(): Promise<HomeResponse> {
-  const [config, hotels] = await Promise.all([
+  const [config, recentHotels, vipProviders] = await Promise.all([
     getHomeConfig(),
     Hotel.find({ deleted_at: null })
       .select({
         _id: 1,
+        provider_id: 1,
         location_id: 1,
         name: 1,
         address: 1,
@@ -731,9 +753,36 @@ export async function getHomeData(): Promise<HomeResponse> {
       .sort({ reviewed_at: -1, updated_at: -1, _id: -1 })
       .limit(HOME_SOURCE_LIMIT)
       .lean(),
+    Provider.find({ $or: [{ status: /^ELITE$/i }, { vip_plan: /^elite$/i }] })
+      .select({ _id: 1 })
+      .lean(),
   ]);
 
-  const leanHotels = hotels as LeanHotel[];
+  const vipHotels = (await Hotel.find({
+    deleted_at: null,
+    provider_id: { $in: vipProviders.map((provider) => provider._id) },
+  })
+    .select({
+      _id: 1,
+      provider_id: 1,
+      location_id: 1,
+      name: 1,
+      address: 1,
+      star_rating: 1,
+      image: 1,
+      images: 1,
+      status: 1,
+      listing_status: 1,
+      reviewed_at: 1,
+    })
+    .sort({ reviewed_at: -1, updated_at: -1, _id: -1 })
+    .limit(HOME_SOURCE_LIMIT)
+    .lean()) as LeanHotel[];
+  const hotelByIdFromSources = new Map<number, LeanHotel>();
+  for (const hotel of [...vipHotels, ...(recentHotels as LeanHotel[])]) {
+    hotelByIdFromSources.set(hotel._id, hotel);
+  }
+  const leanHotels = Array.from(hotelByIdFromSources.values());
   const searchCard = normalizeSearchCard(config.searchCard);
   const categories = normalizeCategories(config.categories ?? []);
   const sections = normalizeSections(config.sections);
@@ -750,10 +799,11 @@ export async function getHomeData(): Promise<HomeResponse> {
   }
 
   const hotelIds = leanHotels.map((hotel) => hotel._id);
-  const [cheapestPrices, locationMap, reviewStats] = await Promise.all([
+  const [cheapestPrices, locationMap, reviewStats, eliteProviderIds] = await Promise.all([
     getCheapestRoomPrices(hotelIds),
     loadLocationMap(leanHotels.map((hotel) => hotel.location_id)),
     getHotelReviewStats(hotelIds),
+    getEliteProviderIds(leanHotels.map((hotel) => hotel.provider_id)),
   ]);
 
   const sourceHotels: HomeSourceHotel[] = leanHotels.map((hotel) => {
@@ -784,6 +834,7 @@ export async function getHomeData(): Promise<HomeResponse> {
       ratingLabel: rating.toFixed(1),
       hasImage: imageUrl !== null,
       isApproved,
+      isVip: eliteProviderIds.has(hotel.provider_id),
       reviewedAtTs: Number.isFinite(reviewedAtTs) ? reviewedAtTs : 0,
     };
   });
@@ -860,6 +911,7 @@ export async function getHomeData(): Promise<HomeResponse> {
     const {
       hasImage: _hasImage,
       isApproved: _isApproved,
+      isVip: _isVip,
       reviewedAtTs: _reviewedAtTs,
       ...hotelPayload
     } = hotel;
@@ -901,6 +953,7 @@ export async function getHomeData(): Promise<HomeResponse> {
       const {
         hasImage: _hasImage,
         isApproved: _isApproved,
+        isVip: _isVip,
         reviewedAtTs: _reviewedAtTs,
         ...hotelPayload
       } = hotel;
@@ -936,6 +989,7 @@ export async function getHomeData(): Promise<HomeResponse> {
     const {
       hasImage: _hasImage,
       isApproved: _isApproved,
+      isVip: _isVip,
       reviewedAtTs: _reviewedAtTs,
       ...hotelPayload
     } = hotel;

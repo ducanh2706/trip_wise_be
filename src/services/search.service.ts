@@ -3,6 +3,7 @@ import { Airport, type AirportDoc } from '@/models/Airport.model';
 import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Location, type LocationDoc } from '@/models/Location.model';
+import { Provider } from '@/models/Provider.model';
 import { Room } from '@/models/Room.model';
 import { getHotelReviewStats } from '@/services/reviews.service';
 
@@ -30,6 +31,7 @@ type LeanHotel = Pick<
   | 'images'
   | 'status'
   | 'listing_status'
+  | 'provider_id'
 >;
 
 type LeanLocation = Pick<LocationDoc, '_id' | 'name' | 'parent_id' | 'type'>;
@@ -397,6 +399,17 @@ async function getCheapestRoomPrices(hotelIds: number[]): Promise<Map<number, nu
   return new Map(cheapestRooms.map((room) => [room._id, room.priceFrom] as const));
 }
 
+async function getEliteProviderIds(providerIds: string[]): Promise<Set<string>> {
+  if (providerIds.length === 0) return new Set();
+  const providers = await Provider.find({
+    _id: { $in: Array.from(new Set(providerIds)) },
+    $or: [{ status: /^ELITE$/i }, { vip_plan: /^elite$/i }],
+  })
+    .select({ _id: 1 })
+    .lean();
+  return new Set(providers.map((provider) => provider._id));
+}
+
 async function buildAirportMap(): Promise<Map<string, LeanAirport>> {
   const airports = (await Airport.find({})
     .select({ _id: 1, name: 1, location_id: 1 })
@@ -502,6 +515,7 @@ export async function getSearchData(input: {
             images: 1,
             status: 1,
             listing_status: 1,
+            provider_id: 1,
           })
           .sort({ star_rating: -1, _id: 1 })
           .limit(query ? SEARCH_SOURCE_LIMIT * 10 : SEARCH_SOURCE_LIMIT)
@@ -566,9 +580,12 @@ export async function getSearchData(input: {
   const hotelReviewStats = shouldLoadHotels
     ? await getHotelReviewStats(leanHotels.map((hotel) => hotel._id))
     : new Map();
+  const eliteProviderIds = shouldLoadHotels
+    ? await getEliteProviderIds(leanHotels.map((hotel) => hotel.provider_id))
+    : new Set<string>();
 
   const hotelItems = leanHotels
-    .map<SearchHotelItem | null>((hotel) => {
+    .map<(SearchHotelItem & { isVip: boolean }) | null>((hotel) => {
       const locationLabel =
         buildLocationLabel(buildLocationTrail(hotel.location_id, locationMap)) ||
         hotel.address;
@@ -586,11 +603,17 @@ export async function getSearchData(input: {
         ratingLabel: (reviewStats?.average ?? 0).toFixed(1),
         priceLabel: formatVnd(cheapestRoomPrices.get(hotel._id) ?? null),
         route: `/service_details/${hotel._id}`,
+        isVip: eliteProviderIds.has(hotel.provider_id),
       };
     })
-    .filter((hotel): hotel is SearchHotelItem => hotel !== null)
-    .sort((left, right) => Number(right.ratingLabel) - Number(left.ratingLabel))
-    .slice(0, HOTEL_LIMIT);
+    .filter((hotel): hotel is SearchHotelItem & { isVip: boolean } => hotel !== null)
+    .sort((left, right) => {
+      const vipDelta = Number(right.isVip) - Number(left.isVip);
+      if (vipDelta !== 0) return vipDelta;
+      return Number(right.ratingLabel) - Number(left.ratingLabel);
+    })
+    .slice(0, HOTEL_LIMIT)
+    .map(({ isVip: _isVip, ...hotel }) => hotel);
 
   const directDestinationItems = leanDirectLocations
     .map<SearchDestinationItem>((location) => {
