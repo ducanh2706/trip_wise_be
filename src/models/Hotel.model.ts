@@ -20,6 +20,7 @@ const hotelSchema = new Schema(
     bedrooms: { type: Number, default: null },
     bathrooms: { type: Number, default: null },
     max_guests: { type: Number, default: null },
+    analytics_views: { type: Number, default: 0 },
     google_map_url: { type: String, default: null },
     created_at: { type: String },
     updated_at: { type: String },

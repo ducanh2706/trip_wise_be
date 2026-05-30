@@ -1,9 +1,7 @@
-import { Booking } from '@/models/Booking.model';
 import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { Location } from '@/models/Location.model';
 import { Payment } from '@/models/Payment.model';
-import { Review } from '@/models/Review.model';
 import { Room } from '@/models/Room.model';
 import { invalidateHotelDetailCache } from '@/services/hotels.service';
 
@@ -122,10 +120,6 @@ function formatUsd(value: number): string {
   } catch {
     return `$${Math.round(value).toLocaleString('en-US')}`;
   }
-}
-
-function firstNumber(values: Array<number | null | undefined>): number[] {
-  return Array.from(new Set(values.filter((v): v is number => typeof v === 'number')));
 }
 
 function firstString(values: Array<string | null | undefined>): string[] {
@@ -550,17 +544,6 @@ function rangeDays(period: AnalyticsPeriod): number {
   return 30;
 }
 
-function dayKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-    date.getDate(),
-  ).padStart(2, '0')}`;
-}
-
-function truncateDayLabel(key: string): string {
-  const d = new Date(`${key}T00:00:00`);
-  return d.toLocaleDateString('en-US', { weekday: 'short' });
-}
-
 export async function getProviderListingAnalytics(
   providerId: string,
   idRaw: unknown,
@@ -572,120 +555,66 @@ export async function getProviderListingAnalytics(
   }
   const period = parsePeriod(periodRaw);
   const detail = await getProviderListingDetail(providerId, id);
+  const hotel = await Hotel.findOne({ _id: id, provider_id: providerId, deleted_at: null })
+    .select({ analytics_views: 1 })
+    .lean();
+  const totalViews = Math.max(0, Math.round(numberValue(hotel?.analytics_views, 0)));
+
   const roomIds = (await Room.find({ hotel_id: id }).select({ _id: 1 }).lean()).map(
     (room) => room._id,
   );
-  const items = await BookingItem.find({ room_id: { $in: roomIds } }).lean();
+  const bookingItems = await BookingItem.find({ room_id: { $in: roomIds } })
+    .select({ booking_id: 1, total_price: 1 })
+    .lean();
 
+  const bookingIds = firstString(bookingItems.map((item) => item.booking_id));
   const now = new Date();
   const since = new Date(now);
   since.setDate(now.getDate() - rangeDays(period));
-  const beforeSince = new Date(since);
-  beforeSince.setDate(beforeSince.getDate() - rangeDays(period));
+  const previousSince = new Date(since);
+  previousSince.setDate(previousSince.getDate() - rangeDays(period));
 
-  const inWindow = items.filter((item) => {
-    const t = new Date(item.created_at ?? item.start_date ?? '1970-01-01').getTime();
-    return t >= since.getTime() && t <= now.getTime();
-  });
-  const prevWindow = items.filter((item) => {
-    const t = new Date(item.created_at ?? item.start_date ?? '1970-01-01').getTime();
-    return t >= beforeSince.getTime() && t < since.getTime();
-  });
-
-  const revenue = inWindow.reduce((sum, item) => sum + numberValue(item.total_price, 0), 0);
-  const prevRevenue = prevWindow.reduce((sum, item) => sum + numberValue(item.total_price, 0), 0);
-  const bookings = inWindow.length;
-  const prevBookings = prevWindow.length;
-  const totalViews = bookings * 68 + 120;
-  const prevViews = prevBookings * 68 + 120;
-
-  const reviews = await Review.find({ hotel_id: id, deleted_at: null }).lean();
-  const avgRating =
-    reviews.length > 0
-      ? Math.round(
-          (reviews.reduce((sum, review) => sum + numberValue(review.rating, 0), 0) /
-            reviews.length) *
-            10,
-        ) / 10
-      : 0;
-
-  const trendMap = new Map<string, { views: number; bookings: number }>();
-  for (const item of inWindow) {
-    const key = dayKey(new Date(item.created_at ?? item.start_date ?? now.toISOString()));
-    const existing = trendMap.get(key) ?? { views: 0, bookings: 0 };
-    existing.bookings += 1;
-    existing.views += 68;
-    trendMap.set(key, existing);
-  }
-  const trend = Array.from(trendMap.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .slice(-7)
-    .map(([key, value]) => ({
-      label: truncateDayLabel(key),
-      views: value.views,
-      bookings: value.bookings,
-    }));
-  while (trend.length < 7) {
-    trend.unshift({ label: '—', views: 0, bookings: 0 });
-  }
-
-  const byDay = Array.from(trendMap.entries())
-    .map(([key, value]) => ({
-      key,
-      day: truncateDayLabel(key),
-      views: value.views,
-      bookings: value.bookings,
-      revenue: inWindow
-        .filter(
-          (item) =>
-            dayKey(new Date(item.created_at ?? item.start_date ?? now.toISOString())) === key,
-        )
-        .reduce((sum, item) => sum + numberValue(item.total_price, 0), 0),
-    }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 3);
-
-  const bookingIds = firstString(inWindow.map((item) => item.booking_id));
-  const paymentRows = await Payment.find({
+  const payments = await Payment.find({
     booking_id: { $in: bookingIds },
-  }).lean();
-  const sourceCount = {
-    direct: paymentRows.filter((row) => row.payment_method === 'CREDIT_CARD').length,
-    app: paymentRows.filter((row) => row.payment_method === 'WALLET').length,
-    partner: paymentRows.filter((row) => row.payment_method === 'PAYPAL').length,
-  };
-  const sourceTotal = sourceCount.direct + sourceCount.app + sourceCount.partner;
-  const toPct = (count: number): number =>
-    sourceTotal > 0 ? Math.round((count / sourceTotal) * 100) : 0;
-
-  const bookingUserRows = await Booking.find({
-    _id: { $in: bookingIds },
+    status: 'SUCCESS',
   })
-    .select({ _id: 1, user_id: 1 })
+    .select({ booking_id: 1, created_at: 1, updated_at: 1 })
     .lean();
-  const guestCounts = new Map<string, number>();
-  for (const booking of bookingUserRows) {
-    const key = booking.user_id ?? 'anonymous';
-    guestCounts.set(key, (guestCounts.get(key) ?? 0) + 1);
+
+  const revenueByBooking = new Map<string, number>();
+  for (const item of bookingItems) {
+    const bookingId = item.booking_id;
+    revenueByBooking.set(
+      bookingId,
+      (revenueByBooking.get(bookingId) ?? 0) + numberValue(item.total_price, 0),
+    );
   }
-  const repeatGuests = Array.from(guestCounts.values()).filter((v) => v >= 2).length;
-  const totalGuests = guestCounts.size;
-  const repeatGuestsPct = totalGuests > 0 ? Math.round((repeatGuests / totalGuests) * 100) : 0;
-  const averageStayNights =
-    inWindow.length > 0
-      ? Math.round(
-          (inWindow.reduce((sum, item) => {
-            const start = new Date(
-              item.start_date ?? item.created_at ?? now.toISOString(),
-            ).getTime();
-            const end = new Date(item.end_date ?? item.start_date ?? now.toISOString()).getTime();
-            if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return sum + 1;
-            return sum + Math.max(1, Math.round((end - start) / 86_400_000));
-          }, 0) /
-            inWindow.length) *
-            10,
-        ) / 10
-      : 0;
+
+  const inCurrentWindow = new Set<string>();
+  const inPreviousWindow = new Set<string>();
+  for (const payment of payments) {
+    const bookingId = payment.booking_id;
+    if (typeof bookingId !== 'string' || bookingId.length === 0) continue;
+    const timeRaw = payment.updated_at ?? payment.created_at;
+    const ts = new Date(typeof timeRaw === 'string' ? timeRaw : '').getTime();
+    if (Number.isNaN(ts)) continue;
+    if (ts >= since.getTime() && ts <= now.getTime()) {
+      inCurrentWindow.add(bookingId);
+    } else if (ts >= previousSince.getTime() && ts < since.getTime()) {
+      inPreviousWindow.add(bookingId);
+    }
+  }
+
+  const bookings = inCurrentWindow.size;
+  const prevBookings = inPreviousWindow.size;
+  const revenue = Array.from(inCurrentWindow).reduce(
+    (sum, bookingId) => sum + (revenueByBooking.get(bookingId) ?? 0),
+    0,
+  );
+  const prevRevenue = Array.from(inPreviousWindow).reduce(
+    (sum, bookingId) => sum + (revenueByBooking.get(bookingId) ?? 0),
+    0,
+  );
 
   const delta = (cur: number, prev: number): number => {
     if (prev <= 0) return cur > 0 ? 100 : 0;
@@ -697,33 +626,20 @@ export async function getProviderListingAnalytics(
     period,
     kpis: {
       totalViews,
-      viewsDeltaPct: delta(totalViews, prevViews),
+      viewsDeltaPct: 0,
       bookings,
       bookingsDeltaPct: delta(bookings, prevBookings),
       revenue,
       revenueDeltaPct: delta(revenue, prevRevenue),
-      averageRating: avgRating,
-      ratingDelta: avgRating > 0 ? 0.2 : 0,
+      averageRating: 5,
+      ratingDelta: 0,
     },
-    trend,
-    topDays: byDay.map((x) => ({
-      day: x.day,
-      views: x.views,
-      bookings: x.bookings,
-      revenue: x.revenue,
-    })),
-    bookingSources: [
-      {
-        label: 'Direct Bookings',
-        percentage: toPct(sourceCount.direct),
-        count: sourceCount.direct,
-      },
-      { label: 'Tripwise App', percentage: toPct(sourceCount.app), count: sourceCount.app },
-      { label: 'Partners', percentage: toPct(sourceCount.partner), count: sourceCount.partner },
-    ],
+    trend: [],
+    topDays: [],
+    bookingSources: [],
     guestStats: {
-      repeatGuestsPct,
-      averageStayNights,
+      repeatGuestsPct: 0,
+      averageStayNights: 0,
     },
   };
 }

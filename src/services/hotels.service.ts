@@ -200,6 +200,9 @@ export async function getHotelDetail(
     await setCacheJson(cacheKey, baseDetail, env.redisHotelDetailTtlSeconds);
   }
 
+  // Analytics counter: every detail open from customer-facing flows counts as one view.
+  void incrementHotelAnalyticsView(id);
+
   const existingBooking = await resolveExistingBookingForHotel(userId, id);
   return {
     ...baseDetail,
@@ -214,6 +217,17 @@ export async function invalidateHotelDetailCache(hotelId: number): Promise<void>
 
 function hotelDetailCacheKey(hotelId: number): string {
   return `hotel:detail:v${HOTEL_DETAIL_CACHE_KEY_VERSION}:${hotelId}`;
+}
+
+async function incrementHotelAnalyticsView(hotelId: number): Promise<void> {
+  try {
+    await Hotel.updateOne(
+      { _id: hotelId, deleted_at: null },
+      { $inc: { analytics_views: 1 } },
+    );
+  } catch {
+    // Best-effort analytics update; do not fail detail response.
+  }
 }
 
 async function buildHotelDetailCachePayload(
