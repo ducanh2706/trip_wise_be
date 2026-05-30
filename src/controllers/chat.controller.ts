@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
-import { answerChat } from '@/services/chat.service';
+import { answerChat, ChatServiceError } from '@/services/chat.service';
 
 export async function answerChatHandler(
   req: Request,
@@ -16,10 +16,16 @@ export async function answerChatHandler(
     const response = await answerChat({
       message,
       userId: req.auth?.userId,
+      clientContext:
+        req.body?.context && typeof req.body.context === 'object' ? req.body.context : undefined,
     });
 
     res.json(response);
   } catch (error) {
+    if (error instanceof ChatServiceError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
     next(error);
   }
 }
