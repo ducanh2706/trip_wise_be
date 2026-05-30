@@ -5,6 +5,7 @@ import {
   getMyTrips,
   MyTripsError,
 } from '@/services/myTrips.service';
+import { createHotelReview, ReviewError } from '@/services/reviews.service';
 
 export async function getMyTripsHandler(
   req: Request,
@@ -45,6 +46,29 @@ export async function cancelMyTripHandler(
     res.json(await cancelMyTrip(req.auth!.userId, req.params.bookingItemId));
   } catch (error) {
     if (error instanceof MyTripsError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function createMyTripReviewHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    res.status(201).json(
+      await createHotelReview({
+        userId: req.auth!.userId,
+        bookingItemId: req.params.bookingItemId,
+        rating: req.body?.rating,
+        comment: req.body?.comment,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof ReviewError) {
       res.status(error.status).json({ message: error.message });
       return;
     }

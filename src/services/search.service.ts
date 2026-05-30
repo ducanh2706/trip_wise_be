@@ -4,6 +4,7 @@ import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Location, type LocationDoc } from '@/models/Location.model';
 import { Room } from '@/models/Room.model';
+import { getHotelReviewStats } from '@/services/reviews.service';
 
 const MAX_LOCATION_DEPTH = 6;
 const SEARCH_SOURCE_LIMIT = 24;
@@ -562,6 +563,9 @@ export async function getSearchData(input: {
   const cheapestRoomPrices = shouldLoadHotels
     ? await getCheapestRoomPrices(leanHotels.map((hotel) => hotel._id))
     : new Map<number, number>();
+  const hotelReviewStats = shouldLoadHotels
+    ? await getHotelReviewStats(leanHotels.map((hotel) => hotel._id))
+    : new Map();
 
   const hotelItems = leanHotels
     .map<SearchHotelItem | null>((hotel) => {
@@ -572,18 +576,20 @@ export async function getSearchData(input: {
       if (!matchesQuery([hotel.name, locationLabel, hotel.address], query)) {
         return null;
       }
+      const reviewStats = hotelReviewStats.get(hotel._id);
 
       return {
         id: hotel._id,
         name: hotel.name,
         locationLabel,
         imageUrl: normalizeSearchImage(pickPrimaryImage(hotel.images, hotel.image)),
-        ratingLabel: hotel.star_rating.toFixed(1),
+        ratingLabel: (reviewStats?.average ?? 0).toFixed(1),
         priceLabel: formatVnd(cheapestRoomPrices.get(hotel._id) ?? null),
         route: `/service_details/${hotel._id}`,
       };
     })
     .filter((hotel): hotel is SearchHotelItem => hotel !== null)
+    .sort((left, right) => Number(right.ratingLabel) - Number(left.ratingLabel))
     .slice(0, HOTEL_LIMIT);
 
   const directDestinationItems = leanDirectLocations

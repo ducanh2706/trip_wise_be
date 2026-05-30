@@ -6,6 +6,10 @@ import { Flight, type FlightDoc } from '@/models/Flight.model';
 import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { createNotification } from '@/services/notifications.service';
+import {
+  getReviewForBookingItem,
+  ReviewResponse,
+} from '@/services/reviews.service';
 
 type UiTab = 'upcoming' | 'completed' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
@@ -95,6 +99,10 @@ export interface MyTripDetail {
   cancelDeadline: string | null;
   cancelDeadlineLabel: string | null;
   cancellationPolicyLabel: string;
+  hotelId: number | null;
+  canReview: boolean;
+  hasReviewed: boolean;
+  myReview: ReviewResponse | null;
 }
 
 export interface CancelMyTripResponse {
@@ -625,6 +633,7 @@ export async function getMyTripDetail(
   let subtitle = 'Tripwise booking';
   let locationLabel = '';
   let imageUrl = DEFAULT_IMAGE;
+  let hotelId: number | null = null;
   let startDate = item.start_date ?? null;
   let endDate = item.end_date ?? null;
   let startDateTitle = 'Start';
@@ -654,6 +663,7 @@ export async function getMyTripDetail(
             .lean()) as LeanHotel | null);
 
     title = hotel?.name ?? 'Hotel booking';
+    hotelId = hotel?._id ?? null;
     subtitle = room?.room_type ?? 'Room booking';
     locationLabel = hotel?.address ?? 'Tripwise listing';
     imageUrl = pickImage([room?.image, ...(hotel?.images ?? []), hotel?.image]);
@@ -737,6 +747,7 @@ export async function getMyTripDetail(
   const quantity = Math.max(1, Math.round(finiteNumber(item.quantity, 1)));
   const pricePerUnit = finiteNumber(item.price_per_unit, 0);
   const totalAmount = finiteNumber(item.total_price, 0);
+  const myReview = type === 'hotel' ? await getReviewForBookingItem(item._id) : null;
 
   return {
     id: item._id,
@@ -777,6 +788,10 @@ export async function getMyTripDetail(
     cancelDeadline: cancelPolicy.deadlineIso,
     cancelDeadlineLabel: cancelPolicy.deadlineLabel,
     cancellationPolicyLabel: cancellationPolicyLabel(item, booking),
+    hotelId,
+    canReview: type === 'hotel' && status === 'completed' && myReview == null,
+    hasReviewed: myReview != null,
+    myReview,
   };
 }
 

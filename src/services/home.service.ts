@@ -11,6 +11,7 @@ import {
 } from '@/models/HomeContent.model';
 import { Location, type LocationDoc } from '@/models/Location.model';
 import { Room } from '@/models/Room.model';
+import { getHotelReviewStats } from '@/services/reviews.service';
 
 const HOME_KEY = 'home';
 const HOME_SOURCE_LIMIT = 36;
@@ -749,9 +750,10 @@ export async function getHomeData(): Promise<HomeResponse> {
   }
 
   const hotelIds = leanHotels.map((hotel) => hotel._id);
-  const [cheapestPrices, locationMap] = await Promise.all([
+  const [cheapestPrices, locationMap, reviewStats] = await Promise.all([
     getCheapestRoomPrices(hotelIds),
     loadLocationMap(leanHotels.map((hotel) => hotel.location_id)),
+    getHotelReviewStats(hotelIds),
   ]);
 
   const sourceHotels: HomeSourceHotel[] = leanHotels.map((hotel) => {
@@ -761,6 +763,7 @@ export async function getHomeData(): Promise<HomeResponse> {
       buildLocationLabel(locationTrail);
     const priceFrom = cheapestPrices.get(hotel._id) ?? null;
     const imageUrl = pickPrimaryImage(hotel.images, hotel.image);
+    const rating = reviewStats.get(hotel._id)?.average ?? 0;
 
     const rawStatus = String(hotel.status ?? '').trim().toUpperCase();
     const rawListingStatus = String(hotel.listing_status ?? '').trim().toLowerCase();
@@ -777,8 +780,8 @@ export async function getHomeData(): Promise<HomeResponse> {
       priceFrom,
       priceLabel: getPriceLabel(priceFrom),
       currency: 'USD',
-      rating: hotel.star_rating,
-      ratingLabel: hotel.star_rating.toFixed(1),
+      rating,
+      ratingLabel: rating.toFixed(1),
       hasImage: imageUrl !== null,
       isApproved,
       reviewedAtTs: Number.isFinite(reviewedAtTs) ? reviewedAtTs : 0,

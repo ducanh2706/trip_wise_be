@@ -1,6 +1,7 @@
 ﻿import { BookingItem } from '@/models/BookingItem.model';
 import { Hotel } from '@/models/Hotel.model';
 import { PayoutRequest } from '@/models/PayoutRequest.model';
+import { Review } from '@/models/Review.model';
 import { User } from '@/models/User.model';
 import { getProviderOrderCounts } from '@/services/orders.service';
 import { resolveProviderForUser } from '@/services/providerAccess.service';
@@ -165,6 +166,14 @@ export async function getProviderDashboard(userId: string): Promise<ProviderDash
   const payoutsPending = payouts
     .filter((row) => ['PENDING', 'SCHEDULED'].includes((row.status ?? '').toUpperCase()))
     .reduce((sum, row) => sum + (row.amount ?? 0), 0);
+  const hotelNameById = new Map(listings.map((listing) => [listing._id, listing.name] as const));
+  const reviews = await Review.find({
+    hotel_id: { $in: listings.map((listing) => listing._id) },
+    deleted_at: null,
+  })
+    .sort({ created_at: -1, _id: -1 })
+    .limit(8)
+    .lean();
 
   const latestActivities: RecentActivity[] = [
     ...items.slice(0, 8).map((item): RecentActivityWithTs => {
@@ -200,6 +209,21 @@ export async function getProviderDashboard(userId: string): Promise<ProviderDash
         timeLabel: relativeTime(activityTime),
         amountLabel: null,
         amountTone: status === 'inactive' ? 'negative' : 'neutral',
+        ts,
+      };
+    }),
+    ...reviews.map((review): RecentActivityWithTs => {
+      const ts = activityTimestamp(review.created_at);
+      return {
+        id: `review-${review._id}`,
+        type: 'review' as const,
+        title: `${review.rating}/5 guest review`,
+        subtitle: `${hotelNameById.get(review.hotel_id) ?? 'Listing'} • ${
+          review.comment ?? ''
+        }`,
+        timeLabel: relativeTime(review.created_at),
+        amountLabel: null,
+        amountTone: 'positive' as const,
         ts,
       };
     }),

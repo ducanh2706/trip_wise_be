@@ -252,7 +252,7 @@ async function buildHotelDetailCachePayload(
     address: hotel.address,
     locationPath,
     starRating: hotel.star_rating,
-    rating: reviewSummary.count > 0 ? reviewSummary.average : hotel.star_rating,
+    rating: reviewSummary.average,
     reviewCount: reviewSummary.count,
     latitude: hotel.latitude ?? null,
     longitude: hotel.longitude ?? null,

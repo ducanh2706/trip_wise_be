@@ -4,6 +4,7 @@ const reviewSchema = new Schema(
   {
     _id: { type: Number, required: true },
     hotel_id: { type: Number, required: true },
+    booking_item_id: { type: String, default: null },
     user_id: { type: String, default: null },
     author_name: { type: String, required: true },
     author_image: { type: String, default: null },
