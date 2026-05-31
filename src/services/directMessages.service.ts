@@ -318,6 +318,8 @@ export async function sendMessage(
         title: conversation.title ?? 'New message',
         body: text,
         actionRoute: `/direct_messaging?conversationId=${encodeURIComponent(conversationId)}`,
+        // Collapse a burst of messages in the same thread into one tray row.
+        collapseKey: `msg:${conversationId}`,
       }),
     ),
   );

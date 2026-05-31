@@ -235,6 +235,10 @@ export interface CreateNotificationInput {
   title: string;
   body?: string;
   actionRoute?: string | null;
+  // Optional FCM collapse key (see push.service.ts PushPayload). Pass e.g.
+  // `msg:<conversationId>` for chat so a burst of messages in one thread
+  // collapses to a single, latest tray row instead of stacking.
+  collapseKey?: string | null;
   // Optional deterministic id. Pass when the caller needs idempotency — e.g.
   // a scheduled reminder ("trip starts tomorrow") that may fire if the worker
   // restarts mid-day, or a per-event notification that must not duplicate on
@@ -309,6 +313,7 @@ export async function createNotification(
       body: input.body ?? '',
       actionRoute: input.actionRoute ?? null,
       notificationId: id,
+      collapseKey: input.collapseKey ?? null,
     });
   } catch (err) {
     console.error('[notifications] createNotification failed', err);

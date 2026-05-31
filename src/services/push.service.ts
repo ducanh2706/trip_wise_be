@@ -7,6 +7,11 @@ export interface PushPayload {
   body: string;
   actionRoute: string | null;
   notificationId: string;
+  // Optional FCM collapse key. When set (e.g. one per chat conversation), FCM
+  // keeps only the latest undelivered message per key while the device is
+  // offline, and the client uses it as a stable tray id so a newer message
+  // replaces the older one instead of stacking. Omit for one-off events.
+  collapseKey?: string | null;
 }
 
 // FCM error codes that mean the token is permanently dead and should be
@@ -41,6 +46,11 @@ export async function sendPushToUser(
     const tokens = docs.map((d) => d._id);
     if (tokens.length === 0) return;
 
+    const android: { priority: 'high'; collapseKey?: string } = {
+      priority: 'high',
+    };
+    if (payload.collapseKey) android.collapseKey = payload.collapseKey;
+
     const res = await messaging.sendEachForMulticast({
       tokens,
       data: {
@@ -49,8 +59,11 @@ export async function sendPushToUser(
         body: payload.body,
         action_route: payload.actionRoute ?? '',
         notification_id: payload.notificationId,
+        // Mirrored into data so the client can use it as a stable tray id/tag
+        // (android.collapseKey above only governs FCM offline collapsing).
+        collapse_key: payload.collapseKey ?? '',
       },
-      android: { priority: 'high' },
+      android,
     });
 
     const stale: string[] = [];
