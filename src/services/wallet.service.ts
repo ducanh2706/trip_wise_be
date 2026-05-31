@@ -274,6 +274,21 @@ async function redeemedPointsForUser(userId: string): Promise<number> {
   );
 }
 
+export async function syncUserLoyaltyPoints(userId: string): Promise<number> {
+  const summary = await calculateCompletedPoints(userId);
+  await Wallet.updateOne(
+    { user_id: userId },
+    {
+      $set: {
+        loyalty_points: summary.points,
+        updated_at: new Date().toISOString(),
+      },
+    },
+    { upsert: false },
+  );
+  return summary.points;
+}
+
 export async function getWalletOverview(userId: string): Promise<WalletOverviewResponse | null> {
   const wallet = await Wallet.findOne({ user_id: userId }).lean();
   if (!wallet) return null;
@@ -289,15 +304,7 @@ export async function getWalletOverview(userId: string): Promise<WalletOverviewR
 
   const points = pointSummary.points;
   if ((wallet.loyalty_points ?? 0) !== points) {
-    await Wallet.updateOne(
-      { user_id: userId },
-      {
-        $set: {
-          loyalty_points: points,
-          updated_at: new Date().toISOString(),
-        },
-      },
-    );
+    await syncUserLoyaltyPoints(userId);
   }
 
   return {

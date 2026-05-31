@@ -123,10 +123,10 @@ function formatUsd(value: number): string {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-      maximumFractionDigits: 0,
-    }).format(Math.round(value));
+      maximumFractionDigits: 2,
+    }).format(value);
   } catch {
-    return `$${Math.round(value).toLocaleString('en-US')}`;
+    return `$${value.toLocaleString('en-US')}`;
   }
 }
 
@@ -156,6 +156,22 @@ function textValue(raw: unknown, fallback: string): string {
 function numberValue(raw: unknown, fallback: number): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
+  return n;
+}
+
+function positiveNumber(raw: unknown, fallback: number, label: string): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new ProviderListingError(400, `${label} must be greater than 0`);
+  }
+  return Math.round(n * 100) / 100;
+}
+
+function positiveInteger(raw: unknown, fallback: number, label: string): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new ProviderListingError(400, `${label} must be a whole number greater than 0`);
+  }
   return n;
 }
 
@@ -450,11 +466,11 @@ export async function createProviderListing(
   const address = textValue(input.location ?? input.address, 'Tripwise destination');
   const description = textValue(input.description, '');
   const status: ListingStatus = 'pending';
-  const price = Math.max(1, Math.round(numberValue(input.pricePerNight ?? input.price, 200)));
-  const roomsCount = Math.max(1, Math.round(numberValue(input.roomsCount, 1)));
-  const maxGuests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
-  const bedrooms = Math.max(1, Math.round(numberValue(input.bedrooms, 1)));
-  const bathrooms = Math.max(1, Math.round(numberValue(input.bathrooms, 1)));
+  const price = positiveNumber(input.pricePerNight ?? input.price, 200, 'Price per night');
+  const roomsCount = positiveInteger(input.roomsCount, 1, 'Number of rooms');
+  const maxGuests = positiveInteger(input.maxGuests, 2, 'Max guests');
+  const bedrooms = positiveInteger(input.bedrooms, 1, 'Bedrooms');
+  const bathrooms = positiveInteger(input.bathrooms, 1, 'Bathrooms');
   const amenities = Array.isArray(input.amenities)
     ? input.amenities.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
     : [];
@@ -539,11 +555,11 @@ export async function updateProviderListing(
     );
   }
   if (input.bedrooms !== undefined)
-    updates.bedrooms = Math.max(1, Math.round(numberValue(input.bedrooms, 1)));
+    updates.bedrooms = positiveInteger(input.bedrooms, 1, 'Bedrooms');
   if (input.bathrooms !== undefined)
-    updates.bathrooms = Math.max(1, Math.round(numberValue(input.bathrooms, 1)));
+    updates.bathrooms = positiveInteger(input.bathrooms, 1, 'Bathrooms');
   if (input.maxGuests !== undefined)
-    updates.max_guests = Math.max(1, Math.round(numberValue(input.maxGuests, 2)));
+    updates.max_guests = positiveInteger(input.maxGuests, 2, 'Max guests');
   if (input.imageUpload !== undefined || input.imageUrl !== undefined) {
     const imageUrl = await saveListingImage(input, publicBaseUrl);
     updates.image = imageUrl;
@@ -566,13 +582,14 @@ export async function updateProviderListing(
     });
     if (room) {
       if (input.pricePerNight !== undefined || input.price !== undefined) {
-        room.base_price = Math.max(
-          1,
-          Math.round(numberValue(input.pricePerNight ?? input.price, room.base_price)),
+        room.base_price = positiveNumber(
+          input.pricePerNight ?? input.price,
+          room.base_price,
+          'Price per night',
         );
       }
       if (input.maxGuests !== undefined) {
-        room.capacity = Math.max(1, Math.round(numberValue(input.maxGuests, room.capacity ?? 2)));
+        room.capacity = positiveInteger(input.maxGuests, room.capacity ?? 2, 'Max guests');
       }
       if (input.roomType !== undefined) {
         room.room_type = textValue(input.roomType, room.room_type ?? 'Room');

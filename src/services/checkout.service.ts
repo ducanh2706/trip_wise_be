@@ -679,7 +679,7 @@ async function settleSuccessfulCheckoutPayment(input: {
         { user_id: input.userId },
         {
           $set: {
-            loyalty_points: Math.max(summary.points - input.pointsDiscount, 0),
+            loyalty_points: summary.points,
             updated_at: now,
           },
         },

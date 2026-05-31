@@ -7,6 +7,7 @@ import { Hotel, type HotelDoc } from '@/models/Hotel.model';
 import { Room, type RoomDoc } from '@/models/Room.model';
 import { User, type UserDoc } from '@/models/User.model';
 import { createNotification } from '@/services/notifications.service';
+import { syncUserLoyaltyPoints } from '@/services/wallet.service';
 
 const ORDER_LIMIT = 50;
 const PROVIDER_CONFIRMATION_TIMEOUT_MS = 12 * 60 * 60 * 1000;
@@ -585,6 +586,9 @@ export async function updateOrderStatus(
   // the right user gets the push, not the actor (the provider).
   const booking = await Booking.findById(item.booking_id).select({ user_id: 1 }).lean();
   await syncBookingStatusFromItems(item.booking_id, now);
+  if (booking?.user_id && (status === 'completed' || status === 'cancelled')) {
+    await syncUserLoyaltyPoints(booking.user_id);
+  }
   if (booking?.user_id) {
     await createNotification({
       userId: booking.user_id,
