@@ -11,6 +11,11 @@ export class ProviderAccessError extends Error {
 
 export type LeanProviderAccess = Pick<ProviderDoc, '_id' | 'business_name' | 'user_id' | 'status'> & {
   vip_plan?: string | null;
+  vip_auto_renew?: boolean | null;
+  vip_expires_at?: string | null;
+  vip_upgraded_at?: string | null;
+  vip_expiry_notice_for?: string | null;
+  vip_expiry_notice_sent_at?: string | null;
   vip_promotions?: Array<Record<string, unknown>> | null;
 };
 
@@ -24,6 +29,11 @@ export async function resolveProviderForUser(userId: string): Promise<LeanProvid
       business_name: 1,
       status: 1,
       vip_plan: 1,
+      vip_auto_renew: 1,
+      vip_expires_at: 1,
+      vip_upgraded_at: 1,
+      vip_expiry_notice_for: 1,
+      vip_expiry_notice_sent_at: 1,
       vip_promotions: 1,
     })
     .lean()) as LeanProviderAccess | null;

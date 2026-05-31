@@ -81,6 +81,17 @@ function sanitizeText(value: unknown, maxLength = 1200): string | undefined {
   return trimmed.slice(0, maxLength);
 }
 
+function sanitizeChatReply(value: string): string {
+  return value
+    .replace(/`/g, '')
+    .replace(/\s*\([^)]*\/[A-Za-z0-9_/?=&.-]+[^)]*\)/g, '')
+    .replace(/(^|\s)\/[A-Za-z0-9_/?=&.-]+/g, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -308,6 +319,7 @@ async function callChatApi(input: {
       'You have access to the JSON context in UI_CONTEXT, DATABASE, CURRENT_SCREEN, RECENT_USER_CONTEXT, and CONVERSATION_HISTORY.',
       'Use that context to answer. Do not claim that you cannot access app data when relevant data is present in the JSON.',
       'If the exact data is absent, say what is missing and point to the relevant Tripwise screen.',
+      'Do not include internal route paths, URLs, code ticks, or path hints such as /search_filter; mention the screen name only.',
       'For list questions, return concise bullet points using database records and prices/statuses when available.',
       'Reply in the same language as the user when obvious.',
     ].join(' '),
@@ -349,7 +361,7 @@ async function callChatApi(input: {
       };
     }>;
   };
-  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  const reply = sanitizeChatReply(data.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
   if (!reply) {
     throw new ChatServiceError(502, 'Chat API returned an empty response');
   }
