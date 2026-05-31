@@ -11,6 +11,8 @@ import { User } from '@/models/User.model';
 interface PaymentSuccessItem {
   id: string;
   serviceType: 'hotel' | 'flight' | 'activity';
+  serviceId: number | null;
+  hotelId: number | null;
   title: string;
   subtitle: string | null;
   startDate: string | null;
@@ -204,6 +206,8 @@ export async function getPaymentSuccess(input: {
       return {
         id: item._id,
         serviceType: 'hotel',
+        serviceId: room?._id ?? null,
+        hotelId: hotel?._id ?? null,
         title: hotel?.name ?? 'Hotel booking',
         subtitle: room?.room_type ?? null,
         startDate: item.start_date ?? null,
@@ -224,6 +228,8 @@ export async function getPaymentSuccess(input: {
       return {
         id: item._id,
         serviceType: 'flight',
+        serviceId: flight?._id ?? item.flight_id ?? null,
+        hotelId: null,
         title: flight?.flight_number ? `Flight ${flight.flight_number}` : 'Flight booking',
         subtitle: flight
           ? `${dep?._id ?? flight.departure_airport} → ${arr?._id ?? flight.arrival_airport}`
@@ -243,6 +249,8 @@ export async function getPaymentSuccess(input: {
     return {
       id: item._id,
       serviceType: 'activity',
+      serviceId: activity?._id ?? item.activity_id ?? null,
+      hotelId: null,
       title: activity?.title ?? 'Activity booking',
       subtitle: activity?.type ?? null,
       startDate: item.start_date ?? null,
