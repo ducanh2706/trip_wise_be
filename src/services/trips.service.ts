@@ -130,11 +130,7 @@ function addUtcDays(date: Date, days: number): Date {
 function deriveTripStatus(start: Date, end: Date): 'ONGOING' | 'UPCOMING' | 'COMPLETED' {
   const currentDate = new Date();
   const today = new Date(
-    Date.UTC(
-      currentDate.getUTCFullYear(),
-      currentDate.getUTCMonth(),
-      currentDate.getUTCDate(),
-    ),
+    Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate()),
   );
   if (end.getTime() < today.getTime()) return 'COMPLETED';
   if (start.getTime() > today.getTime()) return 'UPCOMING';
@@ -317,6 +313,19 @@ export async function createTrip(userId: string, input: CreateTripInput): Promis
   });
 
   return mapTrip(doc.toJSON());
+}
+
+export async function deleteTrip(userId: string, tripId: string): Promise<{ message: string }> {
+  if (!tripId) {
+    throw new TripError(400, 'Trip id is required');
+  }
+
+  const result = await Trip.deleteOne({ _id: tripId, user_id: userId });
+  if (result.deletedCount === 0) {
+    throw new TripError(404, 'Trip not found');
+  }
+
+  return { message: 'Trip deleted.' };
 }
 
 /** Append an item from booked tickets or catalog activity to one day of a trip. */
