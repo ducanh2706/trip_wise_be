@@ -62,6 +62,7 @@ type BookingItemFilter = Record<string, unknown>;
 
 export interface ProviderOrderItem {
   id: string;
+  itemIds: string[];
   bookingId: string;
   status: OrderStatus;
   statusLabel: string;
@@ -323,6 +324,7 @@ function toOrderItem(
     activityMap: Map<number, LeanActivity>;
     airportMap: Map<string, LeanAirport>;
   },
+  groupItems: LeanBookingItem[] = [item],
 ): ProviderOrderItem {
   const booking = context.bookingMap.get(item.booking_id);
   const user = booking?.user_id ? context.userMap.get(booking.user_id) : undefined;
@@ -331,14 +333,17 @@ function toOrderItem(
   const flight = item.flight_id ? context.flightMap.get(item.flight_id) : undefined;
   const activity = item.activity_id ? context.activityMap.get(item.activity_id) : undefined;
   const status = normalizeStatus(item.item_status);
-  const totalPrice =
-    typeof item.total_price === 'number' && Number.isFinite(item.total_price)
-      ? item.total_price
-      : 0;
+  const totalPrice = groupItems.reduce((sum, row) => {
+    return sum + (typeof row.total_price === 'number' && Number.isFinite(row.total_price) ? row.total_price : 0);
+  }, 0);
+  const totalGuests = groupItems.reduce((sum, row) => {
+    return sum + (typeof row.quantity === 'number' && Number.isFinite(row.quantity) ? row.quantity : 0);
+  }, 0);
   const serviceType = item.room_id ? 'hotel' : item.flight_id ? 'flight' : 'activity';
 
   return {
     id: item._id,
+    itemIds: groupItems.map((row) => row._id),
     bookingId: item.booking_id,
     status,
     statusLabel: buildStatusLabel(status),
@@ -349,7 +354,7 @@ function toOrderItem(
     checkIn: item.start_date ?? null,
     checkOut: item.end_date ?? null,
     nights: diffNights(item.start_date ?? undefined, item.end_date ?? undefined),
-    guests: item.quantity ?? null,
+    guests: totalGuests > 0 ? totalGuests : (item.quantity ?? null),
     totalPrice,
     currency: 'USD',
     displayPrice: formatCurrency(totalPrice, 'USD'),
@@ -365,6 +370,81 @@ function toOrderItem(
     serviceType,
     createdAt: item.created_at ?? booking?.created_at ?? null,
     updatedAt: item.updated_at ?? booking?.updated_at ?? null,
+  };
+}
+
+function groupKey(item: LeanBookingItem): string {
+  const serviceKey = item.room_id
+    ? `room:${item.room_id}`
+    : item.flight_id
+      ? `flight:${item.flight_id}`
+      : item.activity_id
+        ? `activity:${item.activity_id}`
+        : `item:${item._id}`;
+  return `${item.booking_id}|${item.provider_id}|${serviceKey}`;
+}
+
+function groupItems(items: LeanBookingItem[]): LeanBookingItem[][] {
+  const grouped = new Map<string, LeanBookingItem[]>();
+  for (const item of items) {
+    const key = groupKey(item);
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.push(item);
+    } else {
+      grouped.set(key, [item]);
+    }
+  }
+  return Array.from(grouped.values());
+}
+
+function updateFilterForGroup(item: LeanBookingItem, providerId?: string): BookingItemFilter {
+  const filter: BookingItemFilter = {
+    booking_id: item.booking_id,
+    ...(providerId ? { provider_id: providerId } : { provider_id: item.provider_id }),
+  };
+  if (item.room_id) {
+    filter.room_id = item.room_id;
+  } else if (item.flight_id) {
+    filter.flight_id = item.flight_id;
+  } else if (item.activity_id) {
+    filter.activity_id = item.activity_id;
+  } else {
+    filter._id = item._id;
+  }
+  return filter;
+}
+
+const groupSelect = {
+  _id: 1,
+  booking_id: 1,
+  provider_id: 1,
+  room_id: 1,
+  flight_id: 1,
+  activity_id: 1,
+  item_status: 1,
+};
+
+async function countGroupedOrders(providerId: string | undefined, status: OrderStatus): Promise<number> {
+  const items = (await BookingItem.find(buildFilter(providerId, status))
+    .select(groupSelect)
+    .lean()) as LeanBookingItem[];
+  return groupItems(items).length;
+}
+
+async function buildGroupedCounts(providerId?: string): Promise<Record<OrderStatus, number>> {
+  const [pending, confirmed, completed, cancelled] = await Promise.all([
+    countGroupedOrders(providerId, 'pending'),
+    countGroupedOrders(providerId, 'confirmed'),
+    countGroupedOrders(providerId, 'completed'),
+    countGroupedOrders(providerId, 'cancelled'),
+  ]);
+
+  return {
+    pending,
+    confirmed,
+    completed,
+    cancelled,
   };
 }
 
@@ -406,54 +486,29 @@ export async function getProviderOrders(input: {
 }): Promise<ProviderOrdersResponse> {
   const selectedStatus = parseOrderStatus(input.status);
   const selectedSort = parseOrderSort(input.sort);
-  const baseFilter = buildFilter(input.providerId);
   const statusFilter = buildFilter(input.providerId, selectedStatus);
 
-  const [items, countsByStatus] = await Promise.all([
+  const [items, counts] = await Promise.all([
     BookingItem.find(statusFilter).sort(buildMongoSort(selectedSort)).limit(ORDER_LIMIT).lean(),
-    BookingItem.find(baseFilter).select({ item_status: 1 }).lean(),
+    buildGroupedCounts(input.providerId),
   ]);
 
-  const counts: Record<OrderStatus, number> = {
-    pending: 0,
-    confirmed: 0,
-    completed: 0,
-    cancelled: 0,
-  };
-
-  for (const item of countsByStatus as Array<Pick<LeanBookingItem, 'item_status'>>) {
-    counts[normalizeStatus(item.item_status)] += 1;
-  }
-
   const leanItems = items as LeanBookingItem[];
-  const context = await buildContext(leanItems);
+  const groups = groupItems(leanItems);
+  const representatives = groups.map((group) => group[0]);
+  const context = await buildContext(representatives);
 
   return {
     status: selectedStatus,
     counts,
-    orders: leanItems.map((item) => toOrderItem(item, context)),
+    orders: groups.map((group) => toOrderItem(group[0], context, group)),
   };
 }
 
 export async function getProviderOrderCounts(
   providerId?: string,
 ): Promise<Record<OrderStatus, number>> {
-  const countsByStatus = await BookingItem.find(buildFilter(providerId))
-    .select({ item_status: 1 })
-    .lean();
-
-  const counts: Record<OrderStatus, number> = {
-    pending: 0,
-    confirmed: 0,
-    completed: 0,
-    cancelled: 0,
-  };
-
-  for (const item of countsByStatus as Array<Pick<LeanBookingItem, 'item_status'>>) {
-    counts[normalizeStatus(item.item_status)] += 1;
-  }
-
-  return counts;
+  return buildGroupedCounts(providerId);
 }
 
 export async function updateOrderStatus(
@@ -463,19 +518,32 @@ export async function updateOrderStatus(
 ): Promise<ProviderOrderItem | null> {
   const now = new Date().toISOString();
   const dbStatus = dbStatusesByOrderStatus[status][0];
-  const updated = await BookingItem.findOneAndUpdate(
+  const source = (await BookingItem.findOne(
     { _id: id, ...(providerId ? { provider_id: providerId } : {}) },
-    { item_status: dbStatus, updated_at: now },
-    { returnDocument: 'after' },
-  ).lean();
+  ).lean()) as LeanBookingItem | null;
 
-  if (!updated) return null;
+  if (!source) return null;
 
-  const item = updated as LeanBookingItem;
+  const groupFilter = updateFilterForGroup(source, providerId);
+  await BookingItem.updateMany(groupFilter, { item_status: dbStatus, updated_at: now });
+  const updatedGroup = (await BookingItem.find(groupFilter).lean()) as LeanBookingItem[];
+  const item = updatedGroup[0] ?? source;
 
   // Provider-triggered, notifies the booking owner — look up the Booking so
   // the right user gets the push, not the actor (the provider).
   const booking = await Booking.findById(item.booking_id).select({ user_id: 1 }).lean();
+  if (status === 'cancelled') {
+    const siblingItems = (await BookingItem.find({ booking_id: item.booking_id })
+      .select({ item_status: 1 })
+      .lean()) as Array<Pick<LeanBookingItem, 'item_status'>>;
+    const allCancelled =
+      siblingItems.length > 0 &&
+      siblingItems.every((row) => normalizeStatus(row.item_status) === 'cancelled');
+    await Booking.updateOne(
+      { _id: item.booking_id },
+      { $set: { status: allCancelled ? 'CANCELLED' : 'PARTIALLY_CANCELLED', updated_at: now } },
+    );
+  }
   if (booking?.user_id) {
     await createNotification({
       userId: booking.user_id,
@@ -487,7 +555,7 @@ export async function updateOrderStatus(
   }
 
   const context = await buildContext([item]);
-  return toOrderItem(item, context);
+  return toOrderItem(item, context, updatedGroup.length ? updatedGroup : [item]);
 }
 
 export async function lookupOrderByTicketCode(input: {

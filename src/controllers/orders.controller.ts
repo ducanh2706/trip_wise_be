@@ -100,6 +100,35 @@ export async function acceptOrderHandler(
   }
 }
 
+export async function rejectOrderHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const id = getParamValue(req.params.id).trim();
+    if (!id) {
+      res.status(400).json({ message: 'Invalid order id' });
+      return;
+    }
+
+    const providerId = await resolveProviderIdForUser(req.auth!.userId);
+    const order = await updateOrderStatus(id, 'cancelled', providerId);
+    if (!order) {
+      res.status(404).json({ message: 'Order not found' });
+      return;
+    }
+
+    res.json(order);
+  } catch (error) {
+    if (error instanceof ProviderAccessError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    next(error);
+  }
+}
+
 export async function lookupProviderTicketHandler(
   req: Request,
   res: Response,

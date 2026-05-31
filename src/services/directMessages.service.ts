@@ -166,31 +166,48 @@ export async function createConversation(
   body: unknown,
 ): Promise<ConversationDetail> {
   const input = (body ?? {}) as Record<string, unknown>;
-  const peerId = normalizeBody(input.participantUserId);
+  const providerId = normalizeBody(input.providerId);
+  const requestedListingId =
+    typeof input.listingId === 'number'
+      ? input.listingId
+      : typeof input.listingId === 'string'
+        ? Number.parseInt(input.listingId, 10)
+        : null;
+  const provider = providerId ? await Provider.findById(providerId).lean() : null;
+  const peerId =
+    normalizeBody(input.participantUserId) ||
+    (typeof provider?.user_id === 'string' ? provider.user_id : providerId);
   if (!peerId) throw new DirectMessageError(400, 'participantUserId is required');
   if (peerId === userId) throw new DirectMessageError(400, 'Cannot message yourself');
+
+  const listingId =
+    typeof requestedListingId === 'number' && Number.isFinite(requestedListingId)
+      ? requestedListingId
+      : null;
 
   const existing = await DirectConversation.findOne({
     participant_user_ids: { $all: [userId, peerId] },
     booking_id: typeof input.bookingId === 'string' ? input.bookingId : null,
+    ...(listingId ? { listing_id: listingId } : {}),
   }).lean();
   if (existing) return getConversation(userId, existing._id);
 
   const now = new Date().toISOString();
-  const [peer, provider, hotel] = await Promise.all([
+  const [peer, hotel] = await Promise.all([
     User.findById(peerId).select({ full_name: 1, email: 1, image: 1 }).lean(),
-    typeof input.providerId === 'string' ? Provider.findById(input.providerId).lean() : null,
-    typeof input.listingId === 'number'
-      ? Hotel.findById(input.listingId).select({ name: 1, image: 1 }).lean()
+    listingId
+      ? Hotel.findOne({ _id: listingId, ...(providerId ? { provider_id: providerId } : {}) })
+          .select({ name: 1, image: 1 })
+          .lean()
       : null,
   ]);
 
   const conversation = (await DirectConversation.create({
     _id: randomUUID(),
     participant_user_ids: [userId, peerId],
-    provider_id: typeof input.providerId === 'string' ? input.providerId : null,
+    provider_id: providerId || null,
     booking_id: typeof input.bookingId === 'string' ? input.bookingId : null,
-    listing_id: typeof input.listingId === 'number' ? input.listingId : null,
+    listing_id: listingId,
     title: peer?.full_name ?? peer?.email ?? 'Tripwise guest',
     subtitle: hotel?.name ?? provider?.business_name ?? 'Direct message',
     avatar_url: peer?.image ?? hotel?.image ?? null,
