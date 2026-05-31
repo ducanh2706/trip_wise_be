@@ -12,6 +12,7 @@ import {
 } from '@/services/reviews.service';
 
 type UiTab = 'upcoming' | 'completed' | 'cancelled';
+type DisplayStatus = 'pending' | 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 type ServiceType = 'hotel' | 'flight' | 'activity';
 
 type LeanBooking = Pick<BookingDoc, '_id' | 'created_at' | 'updated_at' | 'status'>;
@@ -39,6 +40,7 @@ export interface MyTripCard {
   subtitle: string;
   serviceType: ServiceType;
   status: UiTab;
+  displayStatus: DisplayStatus;
   rawStatus: string;
   statusLabel: string;
   dateLabel: string;
@@ -68,6 +70,7 @@ export interface MyTripDetail {
   locationLabel: string;
   serviceType: ServiceType;
   status: UiTab;
+  displayStatus: DisplayStatus;
   rawStatus: string;
   statusLabel: string;
   imageUrl: string;
@@ -186,12 +189,48 @@ function hasEnded(end?: string | null): boolean {
   return endDayUtc < todayStartUtc;
 }
 
+function effectiveDisplayStatus(rawStatus: string, item: LeanItem): DisplayStatus {
+  const normalized = normalizeRawStatus(rawStatus);
+  if (normalized === 'CANCELLED' || normalized === 'CANCELED' || normalized === 'REJECTED') {
+    return 'cancelled';
+  }
+  if (normalized === 'COMPLETED' || normalized === 'DONE') {
+    return 'completed';
+  }
+  if (
+    normalized === 'PENDING' ||
+    normalized === 'REQUESTED' ||
+    normalized === 'AWAITING_APPROVAL' ||
+    normalized === 'CANCELLATION_PENDING'
+  ) {
+    return 'pending';
+  }
+
+  const startDate = parseDate(item.start_date);
+  const endDate = parseDate(item.end_date);
+  if (!startDate) return 'pending';
+
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const startUtc = Date.UTC(
+    startDate.getUTCFullYear(),
+    startDate.getUTCMonth(),
+    startDate.getUTCDate(),
+  );
+  const endUtc = endDate
+    ? Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate())
+    : startUtc;
+
+  if (endUtc < todayUtc) return 'completed';
+  if (startUtc > todayUtc) return 'upcoming';
+  return 'ongoing';
+}
+
 function effectiveItemTab(rawStatus: string, item: LeanItem): UiTab {
-  const tab = normalizeItemStatus(rawStatus);
-  if (tab === 'cancelled') return 'cancelled';
-  if (isCancellationPendingStatus(rawStatus)) return 'upcoming';
-  if (tab !== 'completed' && hasEnded(item.end_date)) return 'completed';
-  return tab;
+  const displayStatus = effectiveDisplayStatus(rawStatus, item);
+  if (displayStatus === 'cancelled') return 'cancelled';
+  if (displayStatus === 'completed' || displayStatus === 'ongoing') return 'completed';
+  return 'upcoming';
 }
 
 function normalizeMaybeBookingId(value: unknown): string | null {
@@ -269,8 +308,31 @@ function statusLabel(tab: UiTab): string {
   return 'Upcoming';
 }
 
+function displayStatusLabel(displayStatus: DisplayStatus): string {
+  if (displayStatus === 'pending') return 'Pending';
+  if (displayStatus === 'ongoing') return 'Ongoing';
+  if (displayStatus === 'completed') return 'Completed';
+  if (displayStatus === 'cancelled') return 'Cancelled';
+  return 'Upcoming';
+}
+
 function itemStatusLabel(rawStatus: string, tab: UiTab): string {
   if (isCancellationPendingStatus(rawStatus)) return 'Cancellation pending';
+  switch (normalizeRawStatus(rawStatus)) {
+    case 'PENDING':
+    case 'REQUESTED':
+    case 'AWAITING_APPROVAL':
+      return 'Pending';
+    case 'CONFIRMED':
+    case 'PAID':
+    case 'ACCEPTED':
+    case 'APPROVED':
+      return 'Confirmed';
+    case 'REJECTED':
+      return 'Rejected';
+    default:
+      break;
+  }
   return statusLabel(tab);
 }
 
@@ -393,6 +455,67 @@ function itemTs(item: LeanItem, booking?: LeanBooking): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
+function tripGroupKey(item: LeanItem): string {
+  const serviceKey =
+    item.room_id != null
+      ? `room:${item.room_id}`
+      : item.flight_id != null
+        ? `flight:${item.flight_id}`
+        : item.activity_id != null
+          ? `activity:${item.activity_id}`
+          : `item:${item._id}`;
+  return `${item.booking_id}|${item.provider_id}|${serviceKey}`;
+}
+
+function groupTripItems(items: LeanItem[]): LeanItem[][] {
+  const grouped = new Map<string, LeanItem[]>();
+  for (const item of items) {
+    const key = tripGroupKey(item);
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.push(item);
+    } else {
+      grouped.set(key, [item]);
+    }
+  }
+  return Array.from(grouped.values());
+}
+
+function groupedDisplayStatus(group: LeanItem[], bookingMap: Map<string, LeanBooking>): DisplayStatus {
+  const statuses = group.map((item) => {
+    const booking = bookingMap.get(item.booking_id);
+    const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status) || 'PENDING';
+    return effectiveDisplayStatus(rawStatus, item);
+  });
+  if (statuses.includes('pending')) return 'pending';
+  if (statuses.includes('ongoing')) return 'ongoing';
+  if (statuses.includes('upcoming')) return 'upcoming';
+  if (statuses.includes('completed')) return 'completed';
+  return 'cancelled';
+}
+
+function tabForDisplayStatus(displayStatus: DisplayStatus): UiTab {
+  if (displayStatus === 'cancelled') return 'cancelled';
+  if (displayStatus === 'completed' || displayStatus === 'ongoing') return 'completed';
+  return 'upcoming';
+}
+
+function groupedAmount(group: LeanItem[]): number {
+  return group.reduce((sum, item) => {
+    return sum + finiteNumber(item.total_price, 0);
+  }, 0);
+}
+
+function groupedCancelPolicy(group: LeanItem[], booking?: LeanBooking) {
+  const policies = group.map((item) => cancellationPolicy(item, booking));
+  return {
+    canCancel: policies.some((policy) => policy.canCancel),
+    isPending: policies.some((policy) => policy.isPending),
+    deadlineIso: policies.find((policy) => policy.deadlineIso)?.deadlineIso ?? null,
+    deadlineLabel: policies.find((policy) => policy.deadlineLabel)?.deadlineLabel ?? null,
+  };
+}
+
 export async function getMyTrips(
   userId: string,
   statusInput?: unknown,
@@ -466,16 +589,16 @@ export async function getMyTrips(
     .lean()) as LeanActivity[];
   const activityMap = new Map(activities.map((activity) => [activity._id, activity] as const));
 
-  const mapped: MyTripCard[] = items.map((item) => {
+  const groupedItems = groupTripItems(items);
+  const mapped: MyTripCard[] = groupedItems.map((group) => {
+    const item = group[0];
     const type = serviceTypeOf(item);
     const booking = bookingMap.get(item.booking_id);
     const rawStatus = normalizeRawStatus(item.item_status ?? booking?.status) || 'PENDING';
-    const tab = effectiveItemTab(rawStatus, item);
-    const cancelPolicy = cancellationPolicy(item, booking);
-    const amount =
-      typeof item.total_price === 'number' && Number.isFinite(item.total_price)
-        ? item.total_price
-        : 0;
+    const displayStatus = groupedDisplayStatus(group, bookingMap);
+    const tab = tabForDisplayStatus(displayStatus);
+    const cancelPolicy = groupedCancelPolicy(group, booking);
+    const amount = groupedAmount(group);
 
     if (type === 'hotel') {
       const room = item.room_id != null ? roomMap.get(item.room_id) : undefined;
@@ -490,8 +613,9 @@ export async function getMyTrips(
           : hotel?.address ?? 'Tripwise listing',
         serviceType: 'hotel',
         status: tab,
+        displayStatus,
         rawStatus,
-        statusLabel: itemStatusLabel(rawStatus, tab),
+        statusLabel: displayStatusLabel(displayStatus),
         dateLabel: formatDateRange(item.start_date, item.end_date),
         amount,
         amountLabel: formatAmount(amount),
@@ -521,8 +645,9 @@ export async function getMyTrips(
           : 'Flight route',
         serviceType: 'flight',
         status: tab,
+        displayStatus,
         rawStatus,
-        statusLabel: itemStatusLabel(rawStatus, tab),
+        statusLabel: displayStatusLabel(displayStatus),
         dateLabel: formatDateRange(item.start_date, item.end_date),
         amount,
         amountLabel: formatAmount(amount),
@@ -545,8 +670,9 @@ export async function getMyTrips(
       subtitle: activity?.type ? `${activity.type} activity` : 'Activity experience',
       serviceType: 'activity',
       status: tab,
+      displayStatus,
       rawStatus,
-      statusLabel: itemStatusLabel(rawStatus, tab),
+      statusLabel: displayStatusLabel(displayStatus),
       dateLabel: formatDateRange(item.start_date, item.end_date),
       amount,
       amountLabel: formatAmount(amount),
@@ -573,11 +699,19 @@ export async function getMyTrips(
     .sort((left, right) => {
       const lt = itemTs(itemById.get(left.id)!, bookingMap.get(left.bookingId));
       const rt = itemTs(itemById.get(right.id)!, bookingMap.get(right.bookingId));
-      if (left.status === 'upcoming' && right.status === 'upcoming') return lt - rt;
+      if (
+        left.status === 'upcoming' &&
+        right.status === 'upcoming'
+      ) {
+        return lt - rt;
+      }
       return rt - lt;
     });
 
-  const baseFeatured = sorted.find((card) => card.status === 'upcoming') ?? sorted[0] ?? null;
+  const baseFeatured =
+    sorted.find((card) => card.status === 'upcoming') ??
+    sorted[0] ??
+    null;
   const filtered = sorted.filter((card) => card.status === selectedTab);
   const focusIndex =
     focusBookingId == null
@@ -742,6 +876,7 @@ export async function getMyTripDetail(
 
   const rawStatus = normalizeRawStatus(item.item_status ?? booking.status) || 'PENDING';
   const status = effectiveItemTab(rawStatus, item);
+  const displayStatus = effectiveDisplayStatus(rawStatus, item);
   const cancelPolicy = cancellationPolicy(item, booking);
   const nights = type === 'hotel' ? diffNights(startDate, endDate) : null;
   const quantity = Math.max(1, Math.round(finiteNumber(item.quantity, 1)));
@@ -757,8 +892,9 @@ export async function getMyTripDetail(
     locationLabel,
     serviceType: type,
     status,
+    displayStatus,
     rawStatus,
-    statusLabel: itemStatusLabel(rawStatus, status),
+    statusLabel: displayStatusLabel(displayStatus),
     imageUrl,
     ticketCode: item.e_ticket_code ?? '',
     cabinClass: itemExtras.cabin_class ?? null,
