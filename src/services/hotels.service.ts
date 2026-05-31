@@ -190,6 +190,7 @@ async function buildLocationPath(startId: number): Promise<string> {
 export async function getHotelDetail(
   id: number,
   userId?: string,
+  includeExistingBooking = false,
 ): Promise<HotelDetailResponse | null> {
   const cacheKey = hotelDetailCacheKey(id);
   const cached = await getCacheJson<HotelDetailCachePayload>(cacheKey);
@@ -203,7 +204,9 @@ export async function getHotelDetail(
   // Analytics counter: every detail open from customer-facing flows counts as one view.
   void incrementHotelAnalyticsView(id);
 
-  const existingBooking = await resolveExistingBookingForHotel(userId, id);
+  const existingBooking = includeExistingBooking
+    ? await resolveExistingBookingForHotel(userId, id)
+    : null;
   return {
     ...baseDetail,
     existingBooking,

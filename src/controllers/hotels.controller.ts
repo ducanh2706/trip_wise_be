@@ -13,7 +13,14 @@ export async function getHotelDetailHandler(
       return;
     }
 
-    const detail = await getHotelDetail(id, req.auth?.userId);
+    const includeExistingBooking =
+      req.query.includeExistingBooking === 'true' ||
+      req.query.manageBooking === 'true';
+    const detail = await getHotelDetail(
+      id,
+      req.auth?.userId,
+      includeExistingBooking,
+    );
     if (!detail) {
       res.status(404).json({ message: 'Hotel not found' });
       return;
