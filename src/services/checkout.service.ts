@@ -196,6 +196,20 @@ function normalizeServiceType(value: unknown): 'hotel' | 'flight' | 'activity' {
   return 'hotel';
 }
 
+function isHotelAcceptingOrders(hotel: {
+  status?: string | null;
+  listing_status?: string | null;
+}): boolean {
+  const listingStatus =
+    typeof hotel.listing_status === 'string' ? hotel.listing_status.trim().toLowerCase() : '';
+  if (listingStatus.length > 0) {
+    return listingStatus === 'active' || listingStatus === 'live' || listingStatus === 'approved';
+  }
+
+  const status = typeof hotel.status === 'string' ? hotel.status.trim().toUpperCase() : '';
+  return status === 'LIVE' || status === 'ACTIVE' || status === 'APPROVED';
+}
+
 function normalizeCabinClass(value: unknown): 'economy' | 'business' {
   if (typeof value !== 'string') return 'economy';
   return value.trim().toLowerCase() === 'business' ? 'business' : 'economy';
@@ -461,6 +475,9 @@ async function resolveListing(
     if (!fallbackHotel) throw new CheckoutError(404, 'No listings available');
     hotel = fallbackHotel;
     room = fallbackRoom;
+  }
+  if (!isHotelAcceptingOrders(hotel)) {
+    throw new CheckoutError(409, 'This hotel is not accepting new bookings right now');
   }
   if (typeof room.base_price !== 'number' || room.base_price <= 0) {
     throw new CheckoutError(409, 'This hotel is not available for booking yet');

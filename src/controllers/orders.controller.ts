@@ -3,6 +3,7 @@ import {
   getProviderOrders,
   lookupOrderByTicketCode,
   parseOrderStatus,
+  rejectOrder,
   updateOrderStatus,
   type OrderStatus,
 } from '@/services/orders.service';
@@ -113,9 +114,13 @@ export async function rejectOrderHandler(
     }
 
     const providerId = await resolveProviderIdForUser(req.auth!.userId);
-    const order = await updateOrderStatus(id, 'cancelled', providerId);
+    const reason =
+      typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
+        ? req.body.reason.trim()
+        : 'Rejected by provider';
+    const order = await rejectOrder(id, providerId, reason);
     if (!order) {
-      res.status(404).json({ message: 'Order not found' });
+      res.status(404).json({ message: 'Pending order not found' });
       return;
     }
 

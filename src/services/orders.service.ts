@@ -9,6 +9,8 @@ import { User, type UserDoc } from '@/models/User.model';
 import { createNotification } from '@/services/notifications.service';
 
 const ORDER_LIMIT = 50;
+const PROVIDER_CONFIRMATION_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const PENDING_DB_STATUSES = ['PENDING', 'REQUESTED', 'AWAITING_APPROVAL'];
 const DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80';
 
@@ -31,7 +33,7 @@ const statusAliases: Record<string, OrderStatus> = {
 };
 
 const dbStatusesByOrderStatus: Record<OrderStatus, string[]> = {
-  pending: ['PENDING', 'REQUESTED', 'AWAITING_APPROVAL'],
+  pending: PENDING_DB_STATUSES,
   confirmed: ['CONFIRMED', 'PAID', 'ACCEPTED', 'APPROVED'],
   completed: ['COMPLETED', 'DONE'],
   cancelled: ['CANCELLED', 'CANCELED', 'REJECTED'],
@@ -142,6 +144,13 @@ function buildStatusLabel(status: OrderStatus): string {
     default:
       return 'PENDING';
   }
+}
+
+function buildItemStatusLabel(raw: unknown): string {
+  if (typeof raw === 'string' && raw.trim().toUpperCase() === 'REJECTED') {
+    return 'REJECTED';
+  }
+  return buildStatusLabel(normalizeStatus(raw));
 }
 
 function formatCurrency(value: number, currency: string): string {
@@ -346,7 +355,7 @@ function toOrderItem(
     itemIds: groupItems.map((row) => row._id),
     bookingId: item.booking_id,
     status,
-    statusLabel: buildStatusLabel(status),
+    statusLabel: buildItemStatusLabel(item.item_status),
     title: hotel?.name ?? activity?.title ?? buildFlightTitle(flight, context.airportMap),
     guestName: user?.full_name ?? user?.email ?? 'Guest',
     guestAvatarUrl: user?.image ?? null,
@@ -511,6 +520,49 @@ export async function getProviderOrderCounts(
   return buildGroupedCounts(providerId);
 }
 
+async function syncBookingStatusFromItems(bookingId: string, now: string): Promise<void> {
+  const siblingItems = (await BookingItem.find({ booking_id: bookingId })
+    .select({ item_status: 1 })
+    .lean()) as Array<Pick<LeanBookingItem, 'item_status'>>;
+  if (siblingItems.length === 0) return;
+
+  const statuses = siblingItems.map((row) => normalizeStatus(row.item_status));
+  const allCancelled = statuses.every((status) => status === 'cancelled');
+  const hasCancelled = statuses.some((status) => status === 'cancelled');
+  const allConfirmed = statuses.every((status) => status === 'confirmed');
+  const hasConfirmed = statuses.some((status) => status === 'confirmed');
+  const allCompleted = statuses.every((status) => status === 'completed');
+
+  const nextStatus = allCompleted
+    ? 'COMPLETED'
+    : allCancelled
+      ? 'CANCELLED'
+      : hasCancelled
+        ? 'PARTIALLY_CANCELLED'
+        : allConfirmed
+          ? 'CONFIRMED'
+          : hasConfirmed
+            ? 'PARTIALLY_CONFIRMED'
+            : 'PENDING';
+
+  await Booking.updateOne({ _id: bookingId }, { $set: { status: nextStatus, updated_at: now } });
+}
+
+async function notifyBookingOwner(
+  bookingId: string,
+  input: { title: string; body: string; actionRoute?: string },
+): Promise<void> {
+  const booking = await Booking.findById(bookingId).select({ user_id: 1 }).lean();
+  if (!booking?.user_id) return;
+  await createNotification({
+    userId: booking.user_id,
+    type: 'BOOKING',
+    title: input.title,
+    body: input.body,
+    actionRoute: input.actionRoute ?? '/my_trips',
+  });
+}
+
 export async function updateOrderStatus(
   id: string,
   status: OrderStatus,
@@ -532,18 +584,7 @@ export async function updateOrderStatus(
   // Provider-triggered, notifies the booking owner — look up the Booking so
   // the right user gets the push, not the actor (the provider).
   const booking = await Booking.findById(item.booking_id).select({ user_id: 1 }).lean();
-  if (status === 'cancelled') {
-    const siblingItems = (await BookingItem.find({ booking_id: item.booking_id })
-      .select({ item_status: 1 })
-      .lean()) as Array<Pick<LeanBookingItem, 'item_status'>>;
-    const allCancelled =
-      siblingItems.length > 0 &&
-      siblingItems.every((row) => normalizeStatus(row.item_status) === 'cancelled');
-    await Booking.updateOne(
-      { _id: item.booking_id },
-      { $set: { status: allCancelled ? 'CANCELLED' : 'PARTIALLY_CANCELLED', updated_at: now } },
-    );
-  }
+  await syncBookingStatusFromItems(item.booking_id, now);
   if (booking?.user_id) {
     await createNotification({
       userId: booking.user_id,
@@ -556,6 +597,68 @@ export async function updateOrderStatus(
 
   const context = await buildContext([item]);
   return toOrderItem(item, context, updatedGroup.length ? updatedGroup : [item]);
+}
+
+export async function rejectOrder(
+  id: string,
+  providerId?: string,
+  reason = 'Rejected by provider',
+): Promise<ProviderOrderItem | null> {
+  const now = new Date().toISOString();
+  const source = (await BookingItem.findOne({
+    _id: id,
+    item_status: { $in: PENDING_DB_STATUSES },
+    ...(providerId ? { provider_id: providerId } : {}),
+  }).lean()) as LeanBookingItem | null;
+
+  if (!source) return null;
+
+  const groupFilter = {
+    ...updateFilterForGroup(source, providerId),
+    item_status: { $in: PENDING_DB_STATUSES },
+  };
+  await BookingItem.updateMany(groupFilter, {
+    $set: {
+      item_status: 'REJECTED',
+      rejection_reason: reason,
+      rejected_at: now,
+      updated_at: now,
+    },
+  });
+  await syncBookingStatusFromItems(source.booking_id, now);
+  await notifyBookingOwner(source.booking_id, {
+    title: 'Booking rejected',
+    body: 'Your booking request was rejected by the provider.',
+    actionRoute: '/my_trips?status=cancelled',
+  });
+
+  const updatedGroup = (await BookingItem.find(updateFilterForGroup(source, providerId)).lean()) as
+    LeanBookingItem[];
+  const item = updatedGroup.find((row) => row._id === source._id) ?? updatedGroup[0] ?? source;
+  const context = await buildContext([item]);
+  return toOrderItem(item, context, updatedGroup.length ? updatedGroup : [item]);
+}
+
+export async function rejectExpiredPendingOrders(): Promise<{ rejected: number }> {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - PROVIDER_CONFIRMATION_TIMEOUT_MS).toISOString();
+  const expiredItems = (await BookingItem.find({
+    item_status: { $in: PENDING_DB_STATUSES },
+    created_at: { $lte: cutoff },
+  })
+    .select(groupSelect)
+    .lean()) as LeanBookingItem[];
+
+  const groups = groupItems(expiredItems);
+  let rejected = 0;
+  for (const group of groups) {
+    const source = group[0];
+    const reason = 'Automatically rejected after 12 hours without provider confirmation';
+    const result = await rejectOrder(source._id, source.provider_id, reason);
+    if (result) rejected += group.length;
+  }
+
+  return { rejected };
 }
 
 export async function lookupOrderByTicketCode(input: {

@@ -1,6 +1,7 @@
 import cron, { type ScheduledTask } from 'node-cron';
 import { Trip } from '@/models/Trip.model';
 import { createNotification } from '@/services/notifications.service';
+import { rejectExpiredPendingOrders } from '@/services/orders.service';
 
 // Lightweight background scheduler. Three jobs today, all driven by trip
 // dates. Each job uses a deterministic notification id (tripId + date) so
@@ -109,6 +110,13 @@ async function runReviewPrompt(): Promise<void> {
   }
 }
 
+async function runOrderAutoReject(): Promise<void> {
+  const result = await rejectExpiredPendingOrders();
+  if (result.rejected > 0) {
+    console.log(`[scheduler] auto-rejected ${result.rejected} expired pending order item(s)`);
+  }
+}
+
 /** Wraps a job so a single failure doesn't kill the cron task. */
 function safe(name: string, fn: () => Promise<void>): () => Promise<void> {
   return async () => {
@@ -141,9 +149,11 @@ export function startScheduler(): void {
   tasks.push(cron.schedule('0 9 * * *', safe('trip-start-7d', runTripStartsIn7Days)));
   tasks.push(cron.schedule('0 18 * * *', safe('trip-start-1d', runTripStartsTomorrow)));
   tasks.push(cron.schedule('0 10 * * *', safe('review-prompt', runReviewPrompt)));
+  tasks.push(cron.schedule('*/15 * * * *', safe('order-auto-reject', runOrderAutoReject)));
+  void safe('order-auto-reject-startup', runOrderAutoReject)();
 
   console.log(
-    `[scheduler] 3 jobs scheduled: trip-start-7d (09:00), trip-start-1d (18:00), review-prompt (10:00)`,
+    `[scheduler] 4 jobs scheduled: trip-start-7d (09:00), trip-start-1d (18:00), review-prompt (10:00), order-auto-reject (every 15m)`,
   );
 }
 
@@ -152,4 +162,5 @@ export const __schedulerJobs = {
   runTripStartsTomorrow,
   runTripStartsIn7Days,
   runReviewPrompt,
+  runOrderAutoReject,
 };

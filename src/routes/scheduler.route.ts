@@ -28,10 +28,15 @@ router.post('/run/:job', async (req: Request, res: Response, next: NextFunction)
       case 'review':
         await __schedulerJobs.runReviewPrompt();
         break;
+      case 'order-auto-reject':
+        await __schedulerJobs.runOrderAutoReject();
+        break;
       default:
         res
           .status(400)
-          .json({ message: 'Unknown job. Use one of: trip-1d, trip-7d, review' });
+          .json({
+            message: 'Unknown job. Use one of: trip-1d, trip-7d, review, order-auto-reject',
+          });
         return;
     }
     res.json({ ok: true, job });

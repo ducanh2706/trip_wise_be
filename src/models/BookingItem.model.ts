@@ -30,6 +30,8 @@ const bookingItemSchema = new Schema(
     cancellation_reviewed_by: { type: String, default: null },
     refund_amount: { type: Number, default: 0 },
     refunded_at: { type: String, default: null },
+    rejection_reason: { type: String, default: null },
+    rejected_at: { type: String, default: null },
     e_ticket_code: { type: String },
     cabin_class: { type: String, default: null },
     seat_numbers: { type: [String], default: undefined },

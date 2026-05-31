@@ -29,6 +29,7 @@ export interface HotelDetailResponse {
   currency: string;
   host: { id: string; name: string } | null;
   policies: { freeCancellation: boolean };
+  isAcceptingOrders: boolean;
   isFavoritedByMe: boolean;
   googleMapUrl: string | null;
   reviewsPreview: ReviewResponse[];
@@ -65,13 +66,27 @@ const CANCELLABLE_ITEM_STATUSES = new Set([
 const SHORT_NOTICE_DAYS = 7;
 const SHORT_NOTICE_CANCEL_WINDOW_DAYS = 1;
 const STANDARD_CANCEL_WINDOW_DAYS = 7;
-const HOTEL_DETAIL_CACHE_KEY_VERSION = 1;
+const HOTEL_DETAIL_CACHE_KEY_VERSION = 2;
 
 type HotelDetailCachePayload = Omit<HotelDetailResponse, 'existingBooking'>;
 
 function normalizeStatus(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim().toUpperCase();
+}
+
+function isHotelAcceptingOrders(hotel: {
+  status?: string | null;
+  listing_status?: string | null;
+}): boolean {
+  const listingStatus =
+    typeof hotel.listing_status === 'string' ? hotel.listing_status.trim().toLowerCase() : '';
+  if (listingStatus.length > 0) {
+    return listingStatus === 'active' || listingStatus === 'live' || listingStatus === 'approved';
+  }
+
+  const status = normalizeStatus(hotel.status);
+  return status === 'LIVE' || status === 'ACTIVE' || status === 'APPROVED';
 }
 
 function parseDate(value?: string | null): Date | null {
@@ -273,6 +288,7 @@ async function buildHotelDetailCachePayload(
     currency: 'USD',
     host: provider ? { id: provider._id, name: provider.business_name } : null,
     policies: { freeCancellation: true },
+    isAcceptingOrders: isHotelAcceptingOrders(hotel),
     isFavoritedByMe: false,
     googleMapUrl: hotel.google_map_url ?? null,
     reviewsPreview: reviewSummary.preview,
