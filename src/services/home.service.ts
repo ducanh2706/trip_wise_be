@@ -388,6 +388,7 @@ async function getCheapestRoomPrices(
       $match: {
         hotel_id: { $in: hotelIds },
         deleted_at: null,
+        base_price: { $type: 'number', $gt: 0 },
       },
     },
     {
@@ -839,10 +840,13 @@ export async function getHomeData(): Promise<HomeResponse> {
     };
   });
 
-  const hotelById = new Map(
-    sourceHotels.map((hotel) => [hotel.hotelId, hotel] as const),
+  const pricedSourceHotels = sourceHotels.filter(
+    (hotel) => hotel.priceFrom !== null && Number.isFinite(hotel.priceFrom) && hotel.priceFrom > 0,
   );
-  const prioritizedHotels = sourceHotels.slice().sort(compareHomePriority);
+  const hotelById = new Map(
+    pricedSourceHotels.map((hotel) => [hotel.hotelId, hotel] as const),
+  );
+  const prioritizedHotels = pricedSourceHotels.slice().sort(compareHomePriority);
   const offerOverrideByHotelId = mapOverrides<HomeOfferOverrideDoc>(
     config.offerOverrides,
   );

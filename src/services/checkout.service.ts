@@ -343,6 +343,9 @@ async function resolveListing(
     }
     const flight = await Flight.findOne({ _id: flightId, deleted_at: null }).lean();
     if (!flight) throw new CheckoutError(404, 'Flight not found');
+    if (typeof flight.base_price !== 'number' || flight.base_price <= 0) {
+      throw new CheckoutError(409, 'This flight is not available for booking yet');
+    }
     const [departure, arrival] = await Promise.all([
       Airport.findById(flight.departure_airport).select({ _id: 1, name: 1 }).lean(),
       Airport.findById(flight.arrival_airport).select({ _id: 1, name: 1 }).lean(),
@@ -389,6 +392,9 @@ async function resolveListing(
       status: 'LIVE',
     }).lean();
     if (!activity) throw new CheckoutError(404, 'Tour not found');
+    if (typeof activity.base_price !== 'number' || activity.base_price <= 0) {
+      throw new CheckoutError(409, 'This tour is not available for booking yet');
+    }
 
     return {
       serviceType: 'activity',
@@ -432,12 +438,19 @@ async function resolveListing(
     hotel = await Hotel.findOne({ _id: room.hotel_id, deleted_at: null }).lean();
   }
   if (hotel && !room) {
-    room = await Room.findOne({ hotel_id: hotel._id, deleted_at: null })
+    room = await Room.findOne({
+      hotel_id: hotel._id,
+      deleted_at: null,
+      base_price: { $gt: 0 },
+    })
       .sort({ base_price: 1, _id: 1 })
       .lean();
   }
   if (!hotel || !room) {
-    const fallbackRoom = await Room.findOne({ deleted_at: null })
+    const fallbackRoom = await Room.findOne({
+      deleted_at: null,
+      base_price: { $gt: 0 },
+    })
       .sort({ base_price: 1, _id: 1 })
       .lean();
     if (!fallbackRoom) throw new CheckoutError(404, 'No listings available');
@@ -448,6 +461,9 @@ async function resolveListing(
     if (!fallbackHotel) throw new CheckoutError(404, 'No listings available');
     hotel = fallbackHotel;
     room = fallbackRoom;
+  }
+  if (typeof room.base_price !== 'number' || room.base_price <= 0) {
+    throw new CheckoutError(409, 'This hotel is not available for booking yet');
   }
 
   return {

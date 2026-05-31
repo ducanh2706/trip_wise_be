@@ -386,6 +386,7 @@ async function getCheapestRoomPrices(hotelIds: number[]): Promise<Map<number, nu
       $match: {
         hotel_id: { $in: hotelIds },
         deleted_at: null,
+        base_price: { $type: 'number', $gt: 0 },
       },
     },
     {
@@ -522,7 +523,10 @@ export async function getSearchData(input: {
           .lean()
       : Promise.resolve([]),
     shouldLoadFlights
-      ? Flight.find({ deleted_at: null })
+      ? Flight.find({
+          deleted_at: null,
+          base_price: { $gt: 0 },
+        })
           .select({
             _id: 1,
             flight_number: 1,
@@ -543,6 +547,7 @@ export async function getSearchData(input: {
           deleted_at: null,
           status: 'LIVE',
           type: 'TOUR',
+          base_price: { $gt: 0 },
         })
           .select({
             _id: 1,
@@ -593,6 +598,10 @@ export async function getSearchData(input: {
       if (!matchesQuery([hotel.name, locationLabel, hotel.address], query)) {
         return null;
       }
+      const priceFrom = cheapestRoomPrices.get(hotel._id);
+      if (priceFrom == null || !Number.isFinite(priceFrom) || priceFrom <= 0) {
+        return null;
+      }
       const reviewStats = hotelReviewStats.get(hotel._id);
 
       return {
@@ -601,7 +610,7 @@ export async function getSearchData(input: {
         locationLabel,
         imageUrl: normalizeSearchImage(pickPrimaryImage(hotel.images, hotel.image)),
         ratingLabel: (reviewStats?.average ?? 0).toFixed(1),
-        priceLabel: formatVnd(cheapestRoomPrices.get(hotel._id) ?? null),
+        priceLabel: formatVnd(priceFrom),
         route: `/service_details/${hotel._id}`,
         isVip: eliteProviderIds.has(hotel.provider_id),
       };

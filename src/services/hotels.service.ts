@@ -241,6 +241,8 @@ async function buildHotelDetailCachePayload(
 
   const [cheapestRoom, provider, locationPath, reviewSummary] = await Promise.all([
     Room.findOne({ hotel_id: id, deleted_at: null })
+      .where('base_price')
+      .gt(0)
       .sort({ base_price: 1 })
       .lean(),
     Provider.findById(hotel.provider_id).lean(),
